@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include <fs_info.h>
@@ -67,7 +67,10 @@ OggEncoder::Encode(BMessage* message) {
 		return B_ERROR;
 	}
 	char mime[B_MIME_TYPE_LENGTH];
-	info.GetType(mime);
+	mime[0] = '\0';
+	if (info.GetType(mime) != B_OK) {
+		return FSS_INPUT_NOT_SUPPORTED;
+	}
 	if ((strcmp(mime, WAV_MIME_TYPE) != 0)
 			&& (strcmp(mime, RIFF_WAV_MIME_TYPE) != 0)
 			&& (strcmp(mime, RIFF_MIME_TYPE) != 0)
@@ -179,16 +182,15 @@ OggEncoder::GetDefaultPattern() {
 	PRINT(("OggEncoder::LoadDefaultPattern()\n"));
 
 	BPath home;
-	BString pattern;
 
 	if (find_directory(B_USER_DIRECTORY, &home) == B_OK) {
-		pattern = home.Path(); 
-		pattern += "/OGG/%a/%n/%a - %n - %k - %t.ogg";
+		defaultPattern = home.Path();
+		defaultPattern += "/OGG/%a/%n/%a - %n - %k - %t.ogg";
 	} else {
-		pattern = "/boot/home/OGG/%a/%n/%a - %n - %k - %t.ogg";
+		defaultPattern = "/boot/home/OGG/%a/%n/%a - %n - %k - %t.ogg";
 	}
 	
-	return pattern.String();
+	return defaultPattern.String();
 }
 
 int32
@@ -220,7 +222,7 @@ OggEncoder::LoadDefaultMenu() {
 	item = new BMenuItem(_256KBPS, NULL);
 	bitrateMenu->AddItem(item);
 
-	item = new BMenuItem(_350KBPS, NULL);
+	item = new BMenuItem(_320KBPS, NULL);
 	bitrateMenu->AddItem(item);
 
 	menu->AddItem(bitrateMenu);
@@ -260,8 +262,8 @@ OggEncoder::GetBitrate(char* bitrate) {
 		strcpy(bitrate, "192");
 	} else if (strcmp(label, _256KBPS) == 0) {
 		strcpy(bitrate, "256");
-	} else if (strcmp(label, _350KBPS) == 0) {
-		strcpy(bitrate, "350");
+	} else if (strcmp(label, _320KBPS) == 0) {
+		strcpy(bitrate, "320");
 	}
 
 	return B_OK;
@@ -277,7 +279,6 @@ OggEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 	unsigned char c = 0;
 	unsigned char prevc = 0;
 	int i = 0;
-	bool lineStarted = false;
 
 	while (1) {
 		if (CheckForCancel()) {
@@ -298,18 +299,22 @@ OggEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 		prevc = c;
 		c = fgetc(out);
 
-		if (c != 0 && c != 13) {
-			if (c == 'E' && prevc == 13) {
-				i = 0;
-			} else if (c == '%') {
+		if (c == 13) {
+			buffer[i] = 0;
+			PRINT(("%s\n", buffer));
+			i = 0;
+		} else if (c != 0) {
+			if (c == '%'){
 				buffer[i] = '\0';
 				char* tmp;
-				if (buffer[i-5] != ' ') {
+				if (i >= 5 && buffer[i-5] != ' ') {
 					tmp = &(buffer[i-5]);
-				} else if (buffer[i-4] != ' ') {
+				} else if (i >= 4 && buffer[i-4] != ' ') {
 					tmp = &(buffer[i-4]);
-				} else {
+				} else if (i >= 3) {
 					tmp = &(buffer[i-3]);
+				} else {
+					tmp = buffer;
 				}
 				curr = atof(tmp);
 				float delta = curr - prev;
@@ -318,11 +323,10 @@ OggEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 				updateMessage.AddFloat("delta", delta);
 				messenger->SendMessage(&updateMessage);
 			}
-			buffer[i] = c;
-			i++;
-		} else if (c == 13) {
-			buffer[i] = 0;
-			PRINT(("%s\n", buffer));
+			if (i < (int)sizeof(buffer) -1) {
+				buffer[i] = c;
+				i++;
+			}
 		}
 
 		if (c == 'D' && prevc == 10) {

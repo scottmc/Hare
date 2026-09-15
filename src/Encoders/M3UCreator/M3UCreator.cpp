@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include <stdlib.h>
@@ -142,16 +142,15 @@ M3UCreator::GetDefaultPattern() {
 	PRINT(("M3UCreator::LoadDefaultPattern()\n"));
 
 	BPath home;
-	BString pattern;
 
 	if (find_directory(B_USER_DIRECTORY, &home) == B_OK) {
-		pattern += home.Path();
-		pattern += "/playlists/%a.m3u";
+		defaultPattern = home.Path();
+		defaultPattern += "/playlists/%a.m3u";
 	} else {
-		pattern = "/boot/home/playlists/%a.m3u";
+		defaultPattern = "/boot/home/playlists/%a.m3u";
 	}
 
-	return pattern.String();
+	return defaultPattern.String();
 }
 
 //function called to get new AEEncoder subclass

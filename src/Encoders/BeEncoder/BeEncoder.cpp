@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include <Message.h>
@@ -126,7 +126,7 @@ BeEncoder::Encode(BMessage* message) {
 		return B_ERROR;
 	}
 
-	BMediaTrack* inputTrack;
+	BMediaTrack* inputTrack = NULL;
 	int32 numTracks = inputFile.CountTracks();
 	for (int i = 0; i < numTracks; i++) {
 		inputTrack = inputFile.TrackAt(i);
@@ -213,12 +213,16 @@ BeEncoder::Encode(BMessage* message) {
 		}
 
 		if (inputTrack->ReadFrames(sound_buffer, &framecount, &mh) != B_OK) {
+			if(framecount <= 0) {
+				break;
+			}
 			message->AddString("error", "Error reading frames from input track.\n");
 			result = B_ERROR;
 			break;
 		}
 
-		if (status = outputTrack->WriteFrames(sound_buffer, framecount) != B_OK) {
+		status = outputTrack->WriteFrames(sound_buffer, framecount);
+		if (status != B_OK) {
 			message->AddString("error", "Error writing frames to output track.\n");
 			PRINT(("%s\n", strerror(status)));
 			result = B_ERROR;
@@ -248,16 +252,15 @@ BeEncoder::GetDefaultPattern() {
 	PRINT(("BeEncoder::LoadDefaultPattern()\n"));
 
 	BPath home;
-	BString pattern;
 	
 	if (find_directory(B_USER_DIRECTORY, &home) == B_OK) {
-		pattern += home.Path();
-		pattern += "/MP3/%a/%n/%a - %n - %k - %t.mp3";
+		defaultPattern = home.Path();
+		defaultPattern += "/MP3/%a/%n/%a - %n - %k - %t.mp3";
 	} else { 
-		pattern = "/boot/home/MP3/%a/%n/%a - %n - %k - %t.mp3";
+		defaultPattern = "/boot/home/MP3/%a/%n/%a - %n - %k - %t.mp3";
 	}
 
-	return pattern.String();
+	return defaultPattern.String();
 }
 
 int32

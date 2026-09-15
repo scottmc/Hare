@@ -231,23 +231,40 @@ EditorView::ListSelectionChanged(BMessage* message)
         PRINT(("EditorView::ListSelectionChanged(BMessage*)\n"));
 
         free(selectedIndexes);
+        selectedIndexes = 0;
 
-        BColumnListView* colListView;
-        message->FindPointer("source", (void**)&colListView);
-
-        type_code index_type;
-        message->GetInfo("index", &index_type, &numSelected);
-
-        selectedIndexes = (int32*)malloc(numSelected * sizeof(int32));
-
-        for (int i = 0; i < numSelected; i++) {
-                message->FindInt32("index", i, &(selectedIndexes[i]));
+        BColumnListView* colListView = NULL;
+        if (message->FindPointer("source", (void**)&colListView) != B_OK
+        	|| colListView == NULL) {
+        	return;
         }
 
-        int32 index;
-        message->FindInt32("index", &index);
+        type_code index_type;
+        numSelected = 0;
+        if (message->GetInfo("index", &index_type, &numSelected) != B_OK) {
+        	numSelected = 0;
+        }
 
-        if (numSelected == 0) {
+        if (numSelected > 0) {
+        	selectedIndexes = (int32*)malloc(numSelected * sizeof(int32));
+        	if (!selectedIndexes) {
+        		numSelected = 0;
+        	} else {
+        			for (int i = 0; i < numSelected; i++) {
+        				if (message->FindInt32("index", i,
+        							&(selectedIndexes[i])) !=B_OK) {
+        						selectedIndexes[i]= -1;
+        				}
+        			}
+        	}
+        }
+
+        int32 index = -1;
+        if (message->FindInt32("index", &index) != B_OK) {
+        		index = -1;
+        }
+
+        if (numSelected == 0) { 
                 artistCheckBox->SetValue(B_CONTROL_OFF);
                 albumCheckBox->SetValue(B_CONTROL_OFF);
                 titleCheckBox->SetValue(B_CONTROL_OFF);
@@ -271,7 +288,7 @@ EditorView::ListSelectionChanged(BMessage* message)
                 EnableCheckBoxes(true);
                 applyButton->SetEnabled(true);
 
-				BRefRow* row = (BRefRow*)colListView->RowAt(index);
+				BRefRow* row = (index >=0) ? (BRefRow*)colListView->RowAt(index) : NULL;
 				SetControlValues(row);
         } else {
                 artistCheckBox->SetValue(B_CONTROL_ON);

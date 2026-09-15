@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __AE_ENCDER_H__
@@ -10,12 +10,6 @@
 #include <Message.h>
 #include <String.h>
 #include <Volume.h>
-
-#ifdef __FSS_BUILD
-#define __FSS_EXPORT __declspec(dllexport)
-#else
-#define __FSS_EXPORT __declspec(dllimport)
-#endif
 
 #define FSS_ENCODE 'enc'
 #define FSS_SETMAX_STATUS_BAR 'max'
@@ -44,6 +38,7 @@ protected:
 	int32 error;
 	BString name;
 	BString pattern;
+	BString defaultPattern;
 	BMenu* menu;
 
 	virtual int32 LoadDefaultMenu();
@@ -63,6 +58,6 @@ private:
 							 BVolume* volume, char* path);
 };
 
-extern "C" __FSS_EXPORT AEEncoder* load_encoder();
+extern "C" AEEncoder* load_encoder();
 
 #endif
