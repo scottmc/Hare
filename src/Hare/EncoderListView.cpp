@@ -145,8 +145,8 @@ EncoderListView::KeyDown(const char* bytes, int32 numBytes)
 					BRow* currentrow = this->RowAt(i);
 					if (currentrow->IsSelected()) {
 						RemoveRow(currentrow);
+						delete currentrow;
 					}
-					// May need to add code to delete associated BRefRow?
 		        }
 	        }
 			break;

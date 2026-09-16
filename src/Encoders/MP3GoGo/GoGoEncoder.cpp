@@ -89,19 +89,8 @@ GoGoEncoder::Encode(BMessage* message) {
 		message->AddString("error", "Error init'ing input file.\n");
 		return B_ERROR;
 	}
-	BNodeInfo info(&iFile);
-	if (info.InitCheck() != B_OK) {
-		message->AddString("error", "Error getting info on input file.\n");
-		return B_ERROR;
-	}
-	char mime[B_MIME_TYPE_LENGTH];
-	mime[0] = '\0';
-	if (info.GetType(mime) != B_OK){
-		return FSS_INPUT_NOT_SUPPORTED;
-	}
-	if ((strcmp(mime, WAV_MIME_TYPE) != 0)
-			&& (strcmp(mime, RIFF_WAV_MIME_TYPE) != 0)
-			&& (strcmp(mime, RIFF_MIME_TYPE) != 0)) {
+	if (CheckAudioFileType(&iFile) != B_OK) {
+		message->AddString("error", "Input file is not a supported WAV file.\n");
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 

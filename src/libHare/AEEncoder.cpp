@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include <string.h>
@@ -300,7 +300,37 @@ AEEncoder::SaveSettings()
 
 
 int32
-AEEncoder::FindExecutable(const char* executable, char* path)
+AEEncoder::CheckAudioFileType(BFile* file, bool allowAiff)
+{
+	PRINT(("AEEncoder::CheckAudioFileType(BFile*,bool)\n"));
+
+	if (!file || file->InitCheck() != B_OK) {
+		return FSS_INPUT_NOT_SUPPORTED;
+	}
+
+	unsigned char header[12];
+	if (file->ReadAt(0, header, sizeof(header)) != (ssize_t)sizeof(header)) {
+		return FSS_INPUT_NOT_SUPPORTED;
+	}
+
+	// WAV: "RIFF" <chunk size> "WAVE"
+	if (memcmp(header, "RIFF", 4) == 0 && memcmp(header + 8, "WAVE", 4) == 0) {
+		return B_OK;
+	}
+
+	// AIFF/AIFC: "FORM" <chunk size> "AIFF" or "AIFC"
+	if (allowAiff && memcmp(header, "FORM", 4) == 0
+			&& (memcmp(header + 8, "AIFF", 4) == 0
+				|| memcmp(header + 8, "AIFC", 4) == 0)) {
+		return B_OK;
+	}
+
+	return FSS_INPUT_NOT_SUPPORTED;
+}
+
+
+int32
+AEEncoder::FindExecutable(const char* executable, char* path, size_t pathSize)
 {
 	BVolumeRoster volumeRoster;
 	BVolume volume;
@@ -311,7 +341,7 @@ AEEncoder::FindExecutable(const char* executable, char* path)
 		return B_ERROR;
 	}
 
-	if(QueryForExecutable(executable,&volume,path) == B_OK)
+	if(QueryForExecutable(executable,&volume,path,pathSize) == B_OK)
 	{
 		// we found it!!!
 		return B_OK;
@@ -320,7 +350,7 @@ AEEncoder::FindExecutable(const char* executable, char* path)
 	volumeRoster.Rewind();
 	while(volumeRoster.GetNextVolume(&volume) == B_OK)
 	{
-		if(QueryForExecutable(executable,&volume,path) == B_OK)
+		if(QueryForExecutable(executable,&volume,path,pathSize) == B_OK)
 		{
 			// we found it!!!
 			return B_OK;
@@ -333,7 +363,7 @@ AEEncoder::FindExecutable(const char* executable, char* path)
 
 int32
 AEEncoder::QueryForExecutable(const char* executable, BVolume* volume,
-		char* path)
+		char* path, size_t pathSize)
 {
 	PRINT(("AEEncoder::QueryForExecutable(const char*,BVolume*,char*)\n"));
 
@@ -373,8 +403,7 @@ AEEncoder::QueryForExecutable(const char* executable, BVolume* volume,
 		return B_ERROR;
 	}
 
-	strcpy(path,entryPath.Path());
-	if(strcmp(path,entryPath.Path()) != 0)
+	if(strlcpy(path,entryPath.Path(),pathSize) >= pathSize)
 	{
 		return B_ERROR;
 	}

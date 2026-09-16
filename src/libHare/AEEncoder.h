@@ -11,6 +11,8 @@
 #include <String.h>
 #include <Volume.h>
 
+class BFile;
+
 #define FSS_ENCODE 'enc'
 #define FSS_SETMAX_STATUS_BAR 'max'
 #define FSS_MENU_ITEM_SELECTED 'mnu'
@@ -43,8 +45,10 @@ protected:
 
 	virtual int32 LoadDefaultMenu();
 
-	int32 FindExecutable(const char* executable, char* path);
+	int32 FindExecutable(const char* executable, char* path,
+						  size_t pathSize = B_PATH_NAME_LENGTH + 1);
 	bool CheckForCancel();
+	int32 CheckAudioFileType(BFile* file, bool allowAiff = false);
 
 private:
 	bool canceled;
@@ -55,7 +59,7 @@ private:
 	int32 LoadSettings();
 	int32 SaveSettings();
 	int32 QueryForExecutable(const char* executable,
-							 BVolume* volume, char* path);
+							 BVolume* volume, char* path, size_t pathSize);
 };
 
 extern "C" AEEncoder* load_encoder();

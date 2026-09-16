@@ -61,20 +61,8 @@ OggEncoder::Encode(BMessage* message) {
 		message->AddString("error", "Error init'ing input file.\n");
 		return B_ERROR;
 	}
-	BNodeInfo info(&iFile);
-	if (info.InitCheck() != B_OK) {
-		message->AddString("error", "Error getting info on input file.\n");
-		return B_ERROR;
-	}
-	char mime[B_MIME_TYPE_LENGTH];
-	mime[0] = '\0';
-	if (info.GetType(mime) != B_OK) {
-		return FSS_INPUT_NOT_SUPPORTED;
-	}
-	if ((strcmp(mime, WAV_MIME_TYPE) != 0)
-			&& (strcmp(mime, RIFF_WAV_MIME_TYPE) != 0)
-			&& (strcmp(mime, RIFF_MIME_TYPE) != 0)
-			&& (strcmp(mime, AIFF_MIME_TYPE) != 0)) {
+	if (CheckAudioFileType(&iFile, true) != B_OK) {
+		message->AddString("error", "Input file is not a supported WAV/AIFF file.\n");
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
@@ -151,6 +139,11 @@ OggEncoder::Encode(BMessage* message) {
 	FILE* out;
 	int filedes[2];
 	thread_id oggenc = CommandIO(filedes, argc, argv);
+
+	for (int k = 5; k < 5 + numTags; k++) {
+		free((void*)argv[k]);
+	}
+
 	if (oggenc <= B_ERROR) {
 		PRINT(("ERROR: can't load oggenc image\n"));
 		return B_ERROR;
@@ -184,7 +177,7 @@ OggEncoder::GetDefaultPattern() {
 	BPath home;
 
 	if (find_directory(B_USER_DIRECTORY, &home) == B_OK) {
-		defaultPattern = home.Path();
+		defaultPattern = home.Path(); 
 		defaultPattern += "/OGG/%a/%n/%a - %n - %k - %t.ogg";
 	} else {
 		defaultPattern = "/boot/home/OGG/%a/%n/%a - %n - %k - %t.ogg";
@@ -304,7 +297,7 @@ OggEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 			PRINT(("%s\n", buffer));
 			i = 0;
 		} else if (c != 0) {
-			if (c == '%'){
+			if (c == '%') {
 				buffer[i] = '\0';
 				char* tmp;
 				if (i >= 5 && buffer[i-5] != ' ') {
@@ -323,7 +316,7 @@ OggEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 				updateMessage.AddFloat("delta", delta);
 				messenger->SendMessage(&updateMessage);
 			}
-			if (i < (int)sizeof(buffer) -1) {
+			if (i < (int)sizeof(buffer) - 1) {
 				buffer[i] = c;
 				i++;
 			}
@@ -423,7 +416,13 @@ OggEncoder::CommandIO(int* filedes, int argc, const char** argv) {
 
 	int oldstderr;
 
-	pipe(filedes);
+	if (pipe(filedes) != 0) {
+		PRINT(("ERROR: pipe() failed\n"));
+		filedes[0] = -1;
+		filedes[1] = -1;
+		return B_ERROR;
+	}
+
 	oldstderr = dup(STDERR_FILENO);
 	close(STDERR_FILENO);
 	dup2(filedes[1], STDERR_FILENO);
@@ -432,6 +431,13 @@ OggEncoder::CommandIO(int* filedes, int argc, const char** argv) {
 
 	dup2(oldstderr, STDERR_FILENO);
 	close(oldstderr);
+
+	if (ret < B_OK) {
+		close(filedes[0]);
+		close(filedes[1]);
+		filedes[0] = -1;
+		filedes[1] = -1;
+	}
 
 	return ret;
 }
