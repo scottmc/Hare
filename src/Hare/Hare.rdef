@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
  *	Hare Haiku vector icon created 2013 Esther R.
@@ -15,8 +15,8 @@ resource app_signature "application/x-vnd.haikuarchives.hare";
 
 resource app_version {
 	major  = 1,
-	middle = 1,
-	minor  = 1,
+	middle = 2,
+	minor  = 0,
 
 	variety = B_APPV_FINAL,
 	internal = 0,

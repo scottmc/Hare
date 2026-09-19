@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include <errno.h>
@@ -23,8 +23,8 @@ AudioAttribute::AudioAttribute(BFile* file, const char* name,
 							   const char* attribute, type_code type) {
 	PRINT(("AudioAttribute::AudioAttribute(BFile*,const char*)\n"));
 
-	strcpy(this->name, name);
-	strcpy(this->attribute, attribute);
+	strlcpy(this->name, name, sizeof(this->name));
+	strlcpy(this->attribute, attribute, sizeof(this->attribute));
 	this->type = type;
 	this->file = file;
 	this->value = 0;
@@ -215,7 +215,8 @@ AudioAttribute::Read() {
 			}
 			break;
 		case B_INT32_TYPE: {
-				int32 buf;
+				size_t readSize = (size_t)info.size;
+				int32 buf = 0;
 
 				delete [] value;
 				value = 0;

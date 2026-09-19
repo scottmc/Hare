@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include <ctype.h>
@@ -91,16 +91,8 @@ MP3Lame::Encode(BMessage* message) {
 		message->AddString("error", "Error init'ing input file.\n");
 		return B_ERROR;
 	}
-	BNodeInfo info(&iFile);
-	if (info.InitCheck() != B_OK) {
-		message->AddString("error", "Error getting info on input file.\n");
-		return B_ERROR;
-	}
-	char mime[B_MIME_TYPE_LENGTH];
-	info.GetType(mime);
-	if ((strcmp(mime, WAV_MIME_TYPE) != 0)
-			&& (strcmp(mime, RIFF_WAV_MIME_TYPE) != 0)
-			&& (strcmp(mime, RIFF_MIME_TYPE) != 0)) {
+	if (CheckAudioFileType(&iFile) != B_OK) {
+		message->AddString("error", "Input file is not a supported WAV file.\n");
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
@@ -180,16 +172,15 @@ MP3Lame::GetDefaultPattern() {
 	PRINT(("MP3Lame::LoadDefaultPattern()\n"));
 
 	BPath home;
-	BString pattern;
 
 	if (find_directory(B_USER_DIRECTORY, &home) == B_OK) {
-		pattern += home.Path();
-		pattern += "/MP3/%a/%n/%a - %n - %k - %t.mp3";
+		defaultPattern = home.Path();
+		defaultPattern += "/MP3/%a/%n/%a - %n - %k - %t.mp3";
 	} else {
-		pattern = "/boot/home/MP3/%a/%n/%a - %n - %k - %t.mp3";
+		defaultPattern = "/boot/home/MP3/%a/%n/%a - %n - %k - %t.mp3";
 	}
 
-	return pattern.String();
+	return defaultPattern.String();
 }
 
 int32
@@ -498,7 +489,7 @@ MP3Lame::UpdateStatus(FILE* out, BMessenger* messenger) {
 			if (c == '(') {
 				save = true;
 				i = 0;
-			} else if (c == '/') {
+			} else if (c == '%' && save) {
 				save = false;
 				buffer[i] = 0;
 				prev = curr;

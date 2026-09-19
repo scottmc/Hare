@@ -35,7 +35,7 @@ Settings::Settings()
 //	windowFrame = BRect(50, 50, 50, 50);
 	encoding = false;
 	encoder = NULL;
-	strcpy(encoderName, DEFAULT_ENCODER);
+	strlcpy(encoderName, DEFAULT_ENCODER, sizeof(encoderName));
 
 	app_info info;
 	be_app->GetAppInfo(&info);
@@ -44,7 +44,7 @@ Settings::Settings()
 	path.GetParent(&path);
 	path.Append(ADD_ON_DIR);
 
-	strcpy(addonDirectory, path.Path());
+	strlcpy(addonDirectory, path.Path(), sizeof(addonDirectory));
 
 	settings = this;
 }
@@ -75,9 +75,9 @@ Settings::Settings(BMessage* archive)
 	status = archive->FindString("encoderName", &tmp);
 	if (status != B_OK) {
 		PRINT(("Error loading ENCODER\n"));
-		strcpy(encoderName, DEFAULT_ENCODER);
+		strlcpy(encoderName, DEFAULT_ENCODER, sizeof(encoderName));
 	} else {
-		strcpy(encoderName, tmp.String());
+		strlcpy(encoderName, tmp.String(), sizeof(encoderName));
 	}
 	
 	status = archive->FindString("pathPattern", &tmp);
@@ -88,9 +88,9 @@ Settings::Settings(BMessage* archive)
 		BString str;
 		if (encoder) {
 			str = encoder->GetPattern();
-			strcpy(pathPattern, str.String());
+			strlcpy(pathPattern, str.String(), sizeof(pathPattern));
 		} else {
-			strcpy(pathPattern, DEFAULT_PATHPATTERN);
+			strlcpy(pathPattern, DEFAULT_PATHPATTERN, sizeof(pathPattern));
 		}
 	} else {
 		strcpy(pathPattern, tmp.String());
@@ -103,7 +103,7 @@ Settings::Settings(BMessage* archive)
 	path.GetParent(&path);
 	path.Append(ADD_ON_DIR);
 
-	strcpy(addonDirectory, path.Path());
+	strlcpy(addonDirectory, path.Path(),sizeof(addonDirectory));
 
 	settings = this;
 }
@@ -272,7 +272,7 @@ Settings::SetEncoderName(const char* value)
 	PRINT(("Settings::SetEncoderName(const char*)\n"));
 
 	if (value && !encoding) {
-		strcpy(encoderName, value);
+		strlcpy(encoderName, value, sizeof(encoderName));
 	}
 }
 
@@ -290,7 +290,7 @@ Settings::SetPathPattern(const char* value)
 	PRINT(("Settings::SetPathPattern(const char*)\n"));
 	
 	if (value) {
-		strcpy(pathPattern, value);	
+		strlcpy(pathPattern, value, sizeof(pathPattern));
 	}
 	
 }

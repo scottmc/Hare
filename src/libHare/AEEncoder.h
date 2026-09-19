@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __AE_ENCDER_H__
@@ -11,11 +11,7 @@
 #include <String.h>
 #include <Volume.h>
 
-#ifdef __FSS_BUILD
-#define __FSS_EXPORT __declspec(dllexport)
-#else
-#define __FSS_EXPORT __declspec(dllimport)
-#endif
+class BFile;
 
 #define FSS_ENCODE 'enc'
 #define FSS_SETMAX_STATUS_BAR 'max'
@@ -44,12 +40,15 @@ protected:
 	int32 error;
 	BString name;
 	BString pattern;
+	BString defaultPattern;
 	BMenu* menu;
 
 	virtual int32 LoadDefaultMenu();
 
-	int32 FindExecutable(const char* executable, char* path);
+	int32 FindExecutable(const char* executable, char* path,
+						  size_t pathSize = B_PATH_NAME_LENGTH + 1);
 	bool CheckForCancel();
+	int32 CheckAudioFileType(BFile* file, bool allowAiff = false);
 
 private:
 	bool canceled;
@@ -60,9 +59,9 @@ private:
 	int32 LoadSettings();
 	int32 SaveSettings();
 	int32 QueryForExecutable(const char* executable,
-							 BVolume* volume, char* path);
+							 BVolume* volume, char* path, size_t pathSize);
 };
 
-extern "C" __FSS_EXPORT AEEncoder* load_encoder();
+extern "C" AEEncoder* load_encoder();
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include "PrefWindow.h"
@@ -39,8 +39,9 @@ PrefWindow::MessageReceived(BMessage* message)
 				AEEncoder* encoder = settings->Encoder();
 				if (encoder) {
 					encoder->SetPattern(fileNamePatternTextControl->Text());
-					settings->SetPathPattern(fileNamePatternTextControl->Text());
 				}
+				settings->SetPathPattern(fileNamePatternTextControl->Text());
+				settings->SaveSettings();
 				be_app_messenger.SendMessage(new BMessage(FILE_NAME_PATTERN_CHANGED));
 			}
 			break;

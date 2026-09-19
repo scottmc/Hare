@@ -1,7 +1,8 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
+
 #include <Message.h>
 #include <Messenger.h>
 #include <Menu.h>
@@ -17,12 +18,28 @@
 #include <Volume.h>
 #include <Debug.h>
 #include <String.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "AudioAttributes.h"
 #include "ID3Tags.h"
 
 #include "BeEncoder.h"
 #include "MediaMenuItem.h"
+
+
+static void
+FormatRawAudioInfo(const media_format& fmt, char* buf, size_t bufSize)
+{
+	snprintf(buf, bufSize,
+			"format=%lu channels=%lu frame_rate=%.1f byte_order=%d buffer_size=%lu",
+			(uint32)fmt.u.raw_audio.format,
+			(uint32)fmt.u.raw_audio.channel_count,
+			fmt.u.raw_audio.frame_rate,
+			(int)fmt.u.raw_audio.byte_order,
+			(uint32)fmt.u.raw_audio.buffer_size);
+}
+
 
 BeEncoder::BeEncoder() : AEEncoder(ADDON_NAME) {
 	PRINT(("BeEncoder::BeEncoder()\n"));
@@ -126,7 +143,7 @@ BeEncoder::Encode(BMessage* message) {
 		return B_ERROR;
 	}
 
-	BMediaTrack* inputTrack;
+	BMediaTrack* inputTrack = NULL;
 	int32 numTracks = inputFile.CountTracks();
 	for (int i = 0; i < numTracks; i++) {
 		inputTrack = inputFile.TrackAt(i);
@@ -160,11 +177,18 @@ BeEncoder::Encode(BMessage* message) {
 	memset(&infmt, 0, sizeof(media_format));
 	memset(&outfmt, 0, sizeof(media_format));
 
-	inputTrack->EncodedFormat(&infmt);
+	if (inputTrack->EncodedFormat(&infmt) != B_OK) {
+		message->AddString("error",
+						   "Error getting encoded format from inputTrack.\n");
+		return B_ERROR;
+	}
+
 	outfmt.type = B_MEDIA_RAW_AUDIO;
-	outfmt.u.raw_audio.format = media_raw_audio_format::B_AUDIO_UCHAR;
-	outfmt.u.raw_audio.channel_count = 1;
-	inputTrack->DecodedFormat(&outfmt);
+	if (inputTrack->DecodedFormat(&outfmt) != B_OK) {
+		message->AddString("error",
+						   "Error getting decoded format from inputTrack.\n");
+		return B_ERROR;
+	}
 
 	char* sound_buffer = new char[outfmt.u.raw_audio.buffer_size];
 
@@ -185,13 +209,28 @@ BeEncoder::Encode(BMessage* message) {
 
 	BMediaTrack* outputTrack = outputFile.CreateTrack(&outfmt, &codec);
 	if (!outputTrack) {
-		message->AddString("error", "Error creating output audio track.\n");
+		char fmtInfo[128];
+		FormatRawAudioInfo(outfmt, fmtInfo, sizeof(fmtInfo));
+		char err[256];
+		snprintf(err, sizeof(err),
+				"Error creating output audio track. file format='%s' "
+				"codec='%s' %s\n",
+				markedItem->MediaFileFormat()->short_name,
+				codec.short_name,
+				fmtInfo);
+		message->AddString("error", err);
 		delete [] sound_buffer;
 		return B_ERROR;
 	}
 
-	if (outputFile.CommitHeader() != B_OK) {
-		message->AddString("error", "Error commiting header.\n");
+	status_t commitStatus = outputFile.CommitHeader();
+	if (commitStatus != B_OK) {
+		char fmtInfo[128];
+		FormatRawAudioInfo(outfmt, fmtInfo, sizeof(fmtInfo));
+		char err[256];
+		snprintf(err, sizeof(err), "Error committing header: %s (%d) [%s]\n",
+				strerror(commitStatus), (int)commitStatus, fmtInfo);
+		message->AddString("error", err);
 		delete [] sound_buffer;
 		return B_ERROR;
 	}
@@ -212,15 +251,32 @@ BeEncoder::Encode(BMessage* message) {
 			break;
 		}
 
-		if (inputTrack->ReadFrames(sound_buffer, &framecount, &mh) != B_OK) {
-			message->AddString("error", "Error reading frames from input track.\n");
+		status_t readStatus = inputTrack->ReadFrames(sound_buffer, &framecount, &mh);
+		if (readStatus != B_OK) {
+			char fmtInfo[128];
+			FormatRawAudioInfo(outfmt, fmtInfo, sizeof(fmtInfo));
+			char err[256];
+			snprintf(err, sizeof(err),
+					"Error reading frames from input track: %s (%d) [%s]\n",
+					strerror(readStatus), (int)readStatus, fmtInfo);
+			message->AddString("error", err);
 			result = B_ERROR;
 			break;
 		}
 
-		if (status = outputTrack->WriteFrames(sound_buffer, framecount) != B_OK) {
-			message->AddString("error", "Error writing frames to output track.\n");
-			PRINT(("%s\n", strerror(status)));
+		if (framecount <= 0) {
+			break;
+		}
+
+		status = outputTrack->WriteFrames(sound_buffer, framecount);
+		if (status != B_OK) {
+			char fmtInfo[128];
+			FormatRawAudioInfo(outfmt, fmtInfo, sizeof(fmtInfo));
+			char err[256];
+			snprintf(err, sizeof(err),
+					"Error writing frames to output track: %s (%d) [%s]\n",
+					strerror(status), (int)status, fmtInfo);
+			message->AddString("error", err);
 			result = B_ERROR;
 			break;
 		}
@@ -248,16 +304,15 @@ BeEncoder::GetDefaultPattern() {
 	PRINT(("BeEncoder::LoadDefaultPattern()\n"));
 
 	BPath home;
-	BString pattern;
-	
+
 	if (find_directory(B_USER_DIRECTORY, &home) == B_OK) {
-		pattern += home.Path();
-		pattern += "/MP3/%a/%n/%a - %n - %k - %t.mp3";
+		defaultPattern = home.Path();
+		defaultPattern += "/MP3/%a/%n/%a - %n - %k - %t.mp3";
 	} else { 
-		pattern = "/boot/home/MP3/%a/%n/%a - %n - %k - %t.mp3";
+		defaultPattern = "/boot/home/MP3/%a/%n/%a - %n - %k - %t.mp3";
 	}
 
-	return pattern.String();
+	return defaultPattern.String();
 }
 
 int32
@@ -282,8 +337,8 @@ BeEncoder::AddEncoderEntries(BMenu* encoderMenu) {
 	media_file_format mff;
 
 	infmt.type = B_MEDIA_RAW_AUDIO;
-	infmt.u.raw_audio.format = media_raw_audio_format::B_AUDIO_UCHAR;
-	infmt.u.raw_audio.channel_count = 1;
+	infmt.u.raw_audio.format = media_raw_audio_format::B_AUDIO_SHORT;
+	infmt.u.raw_audio.channel_count = 2;
 
 	int32 format_cookie = 0;
 	while (get_next_file_format(&format_cookie, &mff) == B_OK) {
@@ -302,7 +357,19 @@ BeEncoder::AddEncoderEntries(BMenu* encoderMenu) {
 		}
 	}
 
-	item = encoderMenu->ItemAt(0);
+	item = NULL;
+	int32 numItems = encoderMenu->CountItems();
+	for (int32 i = 0; i < numItems; i++) {
+		MediaMenuItem* candidate = (MediaMenuItem*)encoderMenu->ItemAt(i);
+		if (candidate && candidate->MediaFileFormat()
+				&& strcmp(candidate->MediaFileFormat()->short_name, "wav") == 0) {
+			item = candidate;
+			break;
+		}
+	}
+	if (!item) {
+		item = encoderMenu->ItemAt(0);
+	}
 	if (item) {
 		item->SetMarked(true);
 	}

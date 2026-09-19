@@ -278,6 +278,7 @@ AppWindow::LoadEncoderMenu()
 							PRINT(("FOUND load_encoder\n"));
 							AEEncoder* encoder = (*load_encoder)();
 							settings->SetEncoder(encoder);
+							settings->SaveSettings();
 							menuBar->AddItem(new BMenuItem(encoder->GetMenu()));
 						}
 					}

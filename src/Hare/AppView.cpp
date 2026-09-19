@@ -183,11 +183,13 @@ AppView::MessageReceived(BMessage* message)
 				}
 			}
 			break;
-		case ENCODE_MSG:
-			Encode();
+		case ENCODE_MSG: {
+				Encode();
+			}
 			break;
-		case CANCEL_MSG:
-			Cancel();
+		case CANCEL_MSG: {
+				Cancel();
+			}
 			break;
 		case SELECT_ALL_MSG:
 			if (listView->CountRows() > 0) {
@@ -196,8 +198,9 @@ AppView::MessageReceived(BMessage* message)
 				}
 			}
 			break;
-		case DESELECT_ALL_MSG:
-			listView->DeselectAll();
+		case DESELECT_ALL_MSG: {
+				listView->DeselectAll();
+ 			}
 			break;
 		case REMOVE_MSG: {
 				int32 device;
@@ -211,15 +214,17 @@ AppView::MessageReceived(BMessage* message)
 			}
 			break;
 		case PREFS_MSG: {
-			PrefWindow* prefWin = new PrefWindow();
-			prefWin->Show();
-		}
-		case LIST_SELECTION_MSG: {
-			editorView->ListSelectionChanged(message);
-			break;
+				PrefWindow* prefWin = new PrefWindow();
+				prefWin->Show();
 			}
-		case APPLY_ATTRIBUTE_CHANGES:
-			ApplyAttributeChanges(message);
+			break;
+		case LIST_SELECTION_MSG: {
+				editorView->ListSelectionChanged(message);
+			}
+			break;
+		case APPLY_ATTRIBUTE_CHANGES: {
+				ApplyAttributeChanges(message);
+			}
 			break;
 		case FILE_NAME_PATTERN_CHANGED: {
 				int32 numRows = listView->CountRows();
