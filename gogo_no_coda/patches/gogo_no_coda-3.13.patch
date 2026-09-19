@@ -1,0 +1,523 @@
+diff --git a/engine/common.h b/engine/common.h
+index a48b0f8..c82e466 100644
+--- a/engine/common.h
++++ b/engine/common.h
+@@ -15,6 +15,7 @@
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <stdint.h>
+ #ifdef __unix__
+ 	#include <unistd.h>
+ #endif
+@@ -42,6 +43,12 @@
+ 	#define MIE_BIG_ENDIAN
+ #	undef	USE_VECTOR4_FHT
+ #	undef	USE_GOGO2_FHT
++#elif defined(__x86_64__) || defined(__amd64__) || defined(__aarch64__) || defined(__arm__) || defined(__riscv)
++	/* no hand-written asm available: use the plain C routines (same code path as CPU_PPC) */
++	#define CPU_GENERIC
++	#define MIE_LITTLE_ENDIAN
++#	undef	USE_VECTOR4_FHT
++#	undef	USE_GOGO2_FHT
+ #else
+ 	#error "Define CPU_TYPE"
+ #endif
+diff --git a/engine/generic/cpu.c b/engine/generic/cpu.c
+new file mode 100644
+index 0000000..68288d2
+--- /dev/null
++++ b/engine/generic/cpu.c
+@@ -0,0 +1,36 @@
++/*
++ *   CPU support for builds without the hand-written x86 assembly
++ *   (x86_64, ARM, ... : everything runs through the plain C routines).
++ *
++ *   part of this code is origined from
++ *   GOGO-no-coda
++ *
++ *   Copyright(C) 2001,2002,2003 gogo-developer
++ */
++
++#include "common.h"
++#include "cpu.h"
++#include "gogo.h"
++#include "global.h"
++
++/* only a working FPU is assumed, no MMX/3DNow!/SSE routines are selected */
++int
++haveUNIT(void)
++{
++	return MU_tFPU;
++} /* haveUNIT */
++
++void
++initCPU(void)
++{
++} /* initCPU */
++
++void
++termCPU(void)
++{
++} /* termCPU */
++
++/* profiling hooks (implemented in clka.nas on i386) */
++void clkbegin(void){}
++void clkend(void){}
++void clkput(void){}
+diff --git a/engine/generic/gthread.c b/engine/generic/gthread.c
+new file mode 100644
+index 0000000..3715826
+--- /dev/null
++++ b/engine/generic/gthread.c
+@@ -0,0 +1,50 @@
++/*
++ *   POSIX threads + CPU detection for builds that do not use linux/thread.c
++ *   (Haiku, and other systems without /proc/cpuinfo).
++ *
++ *   part of this code is origined from
++ *   GOGO-no-coda
++ *
++ *   Copyright(C) 2001,2002,2003 gogo-developer
++ */
++
++#ifdef	USE_PTHREAD
++/* gogo_initialize_thread_unit(), gogo_create_thread() */
++#include "../../pthread/thread.c"
++
++#include <unistd.h>
++#if defined(__HAIKU__) || defined(__BEOS__)
++#	include <OS.h>	/* get_system_info() */
++#endif
++
++/* number of CPUs, or 0 if it can not be found out */
++static int
++detectCPUs(void)
++{
++#if defined(__HAIKU__) || defined(__BEOS__)
++	system_info info;
++
++	if (get_system_info(&info) == B_OK) return (int)info.cpu_count;
++#elif defined(_SC_NPROCESSORS_ONLN)
++	long n = sysconf(_SC_NPROCESSORS_ONLN);
++
++	if (n > 0) return (int)n;
++#endif
++	return 0;
++} /* detectCPUs */
++
++int
++gogo_get_cpu_count(int *pCPUs, int *pTHREADs)
++{
++	if(*pCPUs == 0){
++		/* auto */
++		int nCPU = detectCPUs();
++
++		*pCPUs = nCPU <= 1 ? 1 : nCPU;
++	}
++	/* manual: use the value given with -cpu */
++	*pTHREADs = *pCPUs;
++
++	return 0;
++} /* gogo_get_cpu_count */
++#endif
+diff --git a/engine/get_audio.c b/engine/get_audio.c
+index c1530e2..8fd2fb1 100644
+--- a/engine/get_audio.c
++++ b/engine/get_audio.c
+@@ -58,10 +58,10 @@ dist_mfbuf_C(float (*mfbuf)[4][576])
+ 			}
+ 		}else{
+ 			for(i = 0; i < 1152; i++){
+-				*buf_L++ = 0.5*((float)(*fr0++) + (float)(*fr0++));
++				*buf_L++ = 0.5*((float)fr0[0] + (float)fr0[1]); fr0 += 2;
+ 			}
+ 			for(i = 0; i < (BLKSIZE-224-MDCTDELAY)/* 752 */; i++){
+-				*buf_L++ = 0.5*((float)(*fr1++) + (float)(*fr1++));
++				*buf_L++ = 0.5*((float)fr1[0] + (float)fr1[1]); fr1 += 2;
+ 			}
+ 		}
+ 	}else{
+@@ -91,13 +91,13 @@ dist_mfbuf_C(float (*mfbuf)[4][576])
+ 			}
+ 		}else{
+ 			for(i = 0; i < 576; i++){
+-				*buf_L++ = 0.5*((float)(*fr0++) + (float)(*fr0++));
++				*buf_L++ = 0.5*((float)fr0[0] + (float)fr0[1]); fr0 += 2;
+ 			}
+ 			for(i = 0; i < 576; i++){
+-				*buf_L++ = 0.5*((float)(*fr1++) + (float)(*fr1++));
++				*buf_L++ = 0.5*((float)fr1[0] + (float)fr1[1]); fr1 += 2;
+ 			}
+ 			for(i = 0; i < (BLKSIZE-224-MDCTDELAY-576)/* 176 */; i++){
+-				*buf_L++ = 0.5*((float)(*fr2++) + (float)(*fr2++));
++				*buf_L++ = 0.5*((float)fr2[0] + (float)fr2[1]); fr2 += 2;
+ 			}
+ 		}
+ 	}
+diff --git a/engine/gogo.c b/engine/gogo.c
+index 0e447e8..1424805 100644
+--- a/engine/gogo.c
++++ b/engine/gogo.c
+@@ -278,7 +278,7 @@ MPGE_setConfigure(UPARAM mode, UPARAM dwPara1, UPARAM dwPara2)
+ 			BE.riffInfo.pRiffInfos = pTmp;
+ 			pTmp += BE.riffInfo.riffInfosLen;
+ 			memmove( pTmp , (void *)pSrc, 4 );
+-			*(unsigned long *)(pTmp + 4) = dwPara1 - 4;
++			*(unsigned int *)(pTmp + 4) = dwPara1 - 4;	/* 32bit field of the RIFF chunk */
+ 			memmove( pTmp + 8, pSrc + 4, dwPara1 - 4 );
+ 			BE.riffInfo.riffInfosLen += addInfoSize;
+ 		} else {
+@@ -430,7 +430,7 @@ initializeThread(void)
+ 		if(unaligned == NULL) return ME_NOMEMORY;
+ 
+ 		/* align to 16 byte boundary */
+-		aligned = (void *)(((int)unaligned + 15) & -16);
++		aligned = (void *)(((uintptr_t)unaligned + 15) & ~(uintptr_t)15);
+ 
+ 		/* initialize */
+ 		memset(aligned, 0, sizeof(gogo_thread_data));
+diff --git a/engine/i386/cpu.c b/engine/i386/cpu.c
+index faa4ab5..83707b4 100644
+--- a/engine/i386/cpu.c
++++ b/engine/i386/cpu.c
+@@ -160,7 +160,7 @@ getNumOfCPU(void)
+ 	}
+ 	return nCPU;
+ 
+-#elif defined(BeOS)
++#elif defined(BeOS) || defined(__HAIKU__)
+ 
+ 	system_info udtsystem_info;
+ 	get_system_info(&udtsystem_info);
+diff --git a/engine/i386/fftsse.nas b/engine/i386/fftsse.nas
+index a64906a..980f581 100644
+--- a/engine/i386/fftsse.nas
++++ b/engine/i386/fftsse.nas
+@@ -23,14 +23,14 @@ __checkalign_fftsse__:
+ Q_SQRT2	dd	1.41421356237, 1.41421356237, 1.41421356237, 1.41421356237
+ 
+ Q_1		dd	1.0, 1.0, 1.0, 1.0
+-costab	dd	9.238795325112867e-01F, 9.238795325112867e-01F, 9.238795325112867e-01F, 9.238795325112867e-01F
+-		dd	3.826834323650898e-01F, 3.826834323650898e-01F, 3.826834323650898e-01F, 3.826834323650898e-01F
+-		dd	9.951847266721969e-01F, 9.951847266721969e-01F, 9.951847266721969e-01F, 9.951847266721969e-01F
+-		dd	9.801714032956060e-02F, 9.801714032956060e-02F, 9.801714032956060e-02F, 9.801714032956060e-02F
+-		dd	9.996988186962042e-01F, 9.996988186962042e-01F, 9.996988186962042e-01F, 9.996988186962042e-01F
+-		dd	2.454122852291229e-02F, 2.454122852291229e-02F, 2.454122852291229e-02F, 2.454122852291229e-02F
+-		dd	9.999811752826011e-01F, 9.999811752826011e-01F, 9.999811752826011e-01F, 9.999811752826011e-01F
+-		dd	6.135884649154475e-03F, 6.135884649154475e-03F, 6.135884649154475e-03F, 6.135884649154475e-03F
++costab	dd	9.238795325112867e-01, 9.238795325112867e-01, 9.238795325112867e-01, 9.238795325112867e-01
++		dd	3.826834323650898e-01, 3.826834323650898e-01, 3.826834323650898e-01, 3.826834323650898e-01
++		dd	9.951847266721969e-01, 9.951847266721969e-01, 9.951847266721969e-01, 9.951847266721969e-01
++		dd	9.801714032956060e-02, 9.801714032956060e-02, 9.801714032956060e-02, 9.801714032956060e-02
++		dd	9.996988186962042e-01, 9.996988186962042e-01, 9.996988186962042e-01, 9.996988186962042e-01
++		dd	2.454122852291229e-02, 2.454122852291229e-02, 2.454122852291229e-02, 2.454122852291229e-02
++		dd	9.999811752826011e-01, 9.999811752826011e-01, 9.999811752826011e-01, 9.999811752826011e-01
++		dd	6.135884649154475e-03, 6.135884649154475e-03, 6.135884649154475e-03, 6.135884649154475e-03
+ 
+ 	align	32
+ revLongInit	db 0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80
+diff --git a/engine/i386/makecfg.c b/engine/i386/makecfg.c
+index def2d27..daa346e 100644
+--- a/engine/i386/makecfg.c
++++ b/engine/i386/makecfg.c
+@@ -18,7 +18,7 @@
+ RW_t RW;
+ RO_t RO;
+ 
+-#if (defined(WIN32) || defined(__linux__) || defined(__os2__)) &&  !defined(__BORLANDC__) &&  !defined(__MINGW32_VERSION)
++#if (defined(WIN32) || defined(__linux__) || defined(__os2__) || defined(__HAIKU__)) &&  !defined(__BORLANDC__) &&  !defined(__MINGW32_VERSION)
+ 	#define USE_BSS
+ #endif
+ 
+diff --git a/engine/newmdct.c b/engine/newmdct.c
+index 66e7672..5b50143 100644
+--- a/engine/newmdct.c
++++ b/engine/newmdct.c
+@@ -1334,7 +1334,7 @@ mdct(float (*xr)[576], float (*subband0)[576], float (*subband1)[576], int *bloc
+ {
+ 	int	k, ch, band;
+ 	char work__[18*4+16];
+-	float *work = (float *)((((int)work__) + 15) & ~15);
++	float *work = (float *)((((uintptr_t)work__) + 15) & ~(uintptr_t)15);
+ 
+ 	for (ch = 0; ch < RO.channels_out; ch++) {
+ 		float *mdct_enc = xr[ch];
+diff --git a/engine/psymodel.c b/engine/psymodel.c
+index e53d2d6..cfedc89 100644
+--- a/engine/psymodel.c
++++ b/engine/psymodel.c
+@@ -446,10 +446,10 @@ void inner_psy_sub3_C( float *eb, float *cb, float *thr )
+ 		th1 = Max(thr[b*4+1], ath);
+ 		th2 = Max(thr[b*4+2], ath);
+ 		th3 = Max(thr[b*4+3], ath);
+-		th0 = (eb[b*4+0]) ? th0 /= eb[b*4+0] : 1.0;
+-		th1 = (eb[b*4+1]) ? th1 /= eb[b*4+1] : 1.0;
+-		th2 = (eb[b*4+2]) ? th2 /= eb[b*4+2] : 1.0;
+-		th3 = (eb[b*4+3]) ? th3 /= eb[b*4+3] : 1.0;
++		th0 = (eb[b*4+0]) ? th0 / eb[b*4+0] : 1.0;
++		th1 = (eb[b*4+1]) ? th1 / eb[b*4+1] : 1.0;
++		th2 = (eb[b*4+2]) ? th2 / eb[b*4+2] : 1.0;
++		th3 = (eb[b*4+3]) ? th3 / eb[b*4+3] : 1.0;
+ 		th0 = Min(th0, 1.0);
+ 		th1 = Min(th1, 1.0);
+ 		th2 = Min(th2, 1.0);
+diff --git a/engine/quantize.c b/engine/quantize.c
+index c4c85fb..24ef1d5 100644
+--- a/engine/quantize.c
++++ b/engine/quantize.c
+@@ -690,7 +690,7 @@ VBR_encode_granule (
+             bst_cod_info = *cod_info;
+             bst_scalefac = *scalefac;
+ 			bst_xrpow_max = xrpow_max;
+-            memcpy(bst_xrpow, xrpow, ixend * sizeof(xrpow));
++            memcpy(bst_xrpow, xrpow, ixend * sizeof(xrpow[0]));
+             memcpy(bst_l3_enc, l3_enc, ixend * sizeof(l3_enc[0]));
+ 
+             /*  try with fewer bits
+diff --git a/engine/setup.c b/engine/setup.c
+index 7cba446..7a41ab9 100644
+--- a/engine/setup.c
++++ b/engine/setup.c
+@@ -9,7 +9,7 @@
+ 
+ #include "cpu.h"
+ 
+-#if   defined(CPU_PPC)
++#if   defined(CPU_PPC) || defined(CPU_GENERIC)
+ 	extern void setup_fft( int unit );
+ 	extern void setup_pow075( int unit );
+ #elif defined(CPU_I386)
+@@ -29,7 +29,7 @@
+ void
+ setupUNIT(int unit)
+ {
+-#if   defined(CPU_PPC)
++#if   defined(CPU_PPC) || defined(CPU_GENERIC)
+ 	setup_fft( unit );
+ 	setup_pow075( unit );
+ #elif defined(CPU_I386)
+diff --git a/engine/tool.c b/engine/tool.c
+index c038e72..075a426 100644
+--- a/engine/tool.c
++++ b/engine/tool.c
+@@ -20,25 +20,25 @@
+ 
+ /* RIFF_DATA_CHUNK */
+ struct CK_RIFF {
+-	long	chunk;				/* "RIFF" */
+-	long	size;				/* sizeof "RIFF" */
++	int	chunk;				/* "RIFF" */
++	int	size;				/* sizeof "RIFF" */
+ } ;
+ 
+ struct CK_FMT {
+-	long	chunk;				/* "WAVE" */
+-	long	form;				/* "fmt " */
+-	long	size;				/* 16 */
++	int	chunk;				/* "WAVE" */
++	int	form;				/* "fmt " */
++	int	size;				/* 16 */
+ 	short	formatID;			/*  1 = RAW WAVE */
+ 	short	num_of_channel;		/* 1 or 2 */
+-	long	freqHz;				/* 44100 etc. */
+-	long	avg_bytes_par_sec;	/* freq * elementsize */
++	int	freqHz;				/* 44100 etc. */
++	int	avg_bytes_par_sec;	/* freq * elementsize */
+ 	short	block_size;			/* byte per element */
+ 	short	bits_par_sample;	/* 16 */
+ } ;
+ 
+ struct CK_DATA {
+-	long	chunk;				/* "DATA" */
+-	long	size;				/* sizeof "DATA" */
++	int	chunk;				/* "DATA" */
++	int	size;				/* sizeof "DATA" */
+ } ;
+ 
+ struct CK_WAVE {
+@@ -61,7 +61,7 @@ int getWaveInfo(unsigned int *size, int *bit, int *freq, int *channel){
+ 	memset(prevbuf, 0, sizeof(prevbuf));
+ 
+ 	do{
+-		memcpy(prevbuf, prevbuf+1, sizeof(prevbuf) - 1);
++		memmove(prevbuf, prevbuf+1, sizeof(prevbuf) - 1);	/* ranges overlap */
+ 		if(readData(&prevbuf[sizeof(prevbuf)-1], 1) != 1) return ERR;
+ 	}while(memcmp(prevbuf, "data", 4));
+ 
+@@ -81,7 +81,7 @@ int getWaveInfo(unsigned int *size, int *bit, int *freq, int *channel){
+ } /* getWaveInfo */
+ 
+ void setBinaryMode(FILE *fp){
+-#if !defined(__unix__)
++#if !defined(__unix__) && !defined(__HAIKU__) && !defined(__BEOS__)
+ 	#if defined(__EMX__)			/* OS/2 emx + gcc */
+ 		_fsetmode(fp, "b");
+ 	#elif defined(__WATCOMC__) || defined(__BORLANDC__)
+diff --git a/engine/vfta.h b/engine/vfta.h
+index 9e88f7e..53092b1 100644
+--- a/engine/vfta.h
++++ b/engine/vfta.h
+@@ -7,7 +7,7 @@
+ 
+ #include "quantize_pvt.h"
+ 
+-#if   defined(CPU_PPC)
++#if   defined(CPU_PPC) || defined(CPU_GENERIC)
+ 	extern void ms_convert_C(FLOAT8* srcl, FLOAT8* srcr, int n);
+ 	#define ms_convert ms_convert_C
+ 	extern void pow075_C(float xr[576], float xrpow[576], float *psum, float *pmax, uint32 *xr_sign);
+diff --git a/file_io/gogo_io.c b/file_io/gogo_io.c
+index 873d18a..52cdcdf 100644
+--- a/file_io/gogo_io.c
++++ b/file_io/gogo_io.c
+@@ -15,6 +15,7 @@
+ #include "gogo_io.h"
+ #include "bitstream.h"
+ #include "vbrtag.h"
++#include "util.h"
+ #include "filehead.h"
+ #include "cpu.h"
+ 
+diff --git a/linux/Makefile b/linux/Makefile
+index 5418c1a..006b9a2 100644
+--- a/linux/Makefile
++++ b/linux/Makefile
+@@ -8,6 +8,8 @@
+ #######################################################
+ 
+ TARGET = gogo
++prefix =
++BINDIR = $(prefix)/bin
+ 
+ #######################################################
+ 
+@@ -16,12 +18,11 @@ CC   = gcc $(PROF) -pipe -c -I../engine -I../file_io/libsnd
+ AS   = nasm -i../engine/i386/
+ LD   = gcc
+ MAKECFG = makecfg
+-LIBS = -lm
+ VPATH = ../engine:../engine/i386:../file_io
+ 
+ LDFLAGS = $(PROF)
+ AFLAGS = -f elf -D__unix__ $(E3DN)
+-CFLAGS = -Wall $(PROF) -DNDEBUG
++CFLAGS = -Wall $(PROF) -D__unix__
+ #CFLAGS += -Wpointer-arith -Wshadow -Wwrite-strings -Wconversion -Waggregate-return -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wredundant-decls -Wnested-externs
+ 
+ CFLAGS += -DHAVE_CONFIG_H -DLAMEPARSE -DLAMESNDFILE
+@@ -97,7 +98,6 @@ LIBSNDCOBJS = \
+ #COBJS += $(LIBSNDCOBJS)
+ 
+ # if FreeBSD then change -lc_r
+-LIBS += -lpthread
+ CFLAGS += -DUSE_PTHREAD
+ COBJS += thread.o
+ 
+@@ -105,9 +105,10 @@ COBJS += thread.o
+ 
+ all:	$(TARGET)
+ 
+-install	: $(TARGET)
+-	cp $(TARGET) /usr/local/bin
+-	strip /usr/local/bin/$(TARGET)
++install	: $(TARGET) $(BINDIR)
++	mkdir -p $(DESTDIR)$(BINDIR)
++	install -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)
++	strip $(DESTDIR)$(BINDIR)/$(TARGET)
+ 
+ $(TARGET): $(COBJS) $(AOBJS)
+ 	$(LD) $(COBJS) $(AOBJS) $(LDFLAGS) -o $(TARGET) $(LIBS)
+diff --git a/linux/Makefile.generic b/linux/Makefile.generic
+new file mode 100644
+index 0000000..ccb1107
+--- /dev/null
++++ b/linux/Makefile.generic
+@@ -0,0 +1,56 @@
++#######################################################
++#
++#   Makefile for GOGO-no-coda, plain C build (no NASM/x86 asm)
++#   for 64bit targets (x86_64 ...)
++#
++#######################################################
++
++TARGET = gogo
++prefix =
++BINDIR = $(prefix)/bin
++
++CC   = gcc
++LD   = gcc
++CINC = -I../engine -I../file_io/libsnd
++LIBS = -lm
++VPATH = ../engine:../engine/generic:../file_io
++
++CFLAGS = -Wall -DNDEBUG -DHAVE_CONFIG_H -DLAMEPARSE -DLAMESNDFILE
++CFLAGS += -O2 -ffast-math -funroll-loops
++# the code type-puns float<->int all over (IEEE754 tricks); do not let gcc optimise on strict aliasing
++CFLAGS += -fno-strict-aliasing
++
++COBJS =	bitstream.o get_audio.o \
++	newmdct.o quantize_pvt.o \
++	tables.o util.o \
++	gogo.o \
++	psymodel.o reservoir.o \
++	takehiro.o \
++	fft.o lame.o \
++	quantize.o \
++	tool.o vbrtag.o \
++	main.o gogo_io.o setup.o \
++	cpu.o
++
++# threads (POSIX threads are part of libroot on Haiku)
++CFLAGS += -DUSE_PTHREAD
++COBJS += gthread.o
++
++all: $(TARGET)
++
++install : $(TARGET)
++	mkdir -p $(DESTDIR)$(BINDIR)
++	install -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)
++	strip $(DESTDIR)$(BINDIR)/$(TARGET)
++
++$(TARGET): $(COBJS)
++	$(LD) $(COBJS) $(LDFLAGS) -o $(TARGET) $(LIBS)
++
++.c.o:
++	$(CC) -c $(CFLAGS) $(CINC) $< -o $@
++
++main.o: ../main.c
++	$(CC) -c $(CFLAGS) $(CINC) $< -o $@
++
++clean:
++	rm -f *.o $(TARGET) *~
+diff --git a/main.c b/main.c
+index d44274c..61201fd 100644
+--- a/main.c
++++ b/main.c
+@@ -5,13 +5,13 @@
+  *   Copyright(C) 2001,2002,2003 gogo-developer
+  */
+ 
+-#if	defined(__linux__) || defined(__ppc__) || defined(__FreeBSD__)
++#if	defined(__linux__) || defined(__ppc__) || defined(__FreeBSD__) || defined(__HAIKU__)
+ #define	USE_ITIMER
+ #include <unistd.h>
+ #include <sys/time.h>
+ #include <signal.h>
+ #endif
+-#if defined(__linux__) || defined(__os2__) || defined(__ppc__) || defined(__CYGWIN32__) || defined(__FreeBSD__)
++#if defined(__linux__) || defined(__os2__) || defined(__ppc__) || defined(__CYGWIN32__) || defined(__FreeBSD__) || defined(__HAIKU__)
+ #  define	min(x,y)	(((x)<(y))?(x):(y))
+ #  define	max(x,y)	(((x)>(y))?(x):(y))
+ #endif
+@@ -26,6 +26,10 @@
+ #include <time.h>
+ #include "gogo.h"
+ 
++/* defined in file_io/gogo_io.c (see engine/gogo_io.h) */
++extern MERET init_bench_input(struct MCP_INPDEV_USERFUNC* user_in);
++extern MERET init_bench_output(MPGE_USERFUNC* user_out);
++
+ #ifndef NOERR
+ 	#define NOERR 0
+ 	#define ERR 1

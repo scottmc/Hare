@@ -1,9 +1,14 @@
+/*
+ * Copyright 2000-2026, Hare Team. All rights reserved.
+ * Distributed under the terms of the MIT License.
+ */
 #include "AppWindow.h"
 
-#include <stdlib.h>
-
+#include <AboutWindow.h>
+#include "AEEncoder.h"
 #include <Application.h>
 #include <Alert.h>
+#include <AppFileInfo.h>
 #include <Debug.h>
 #include <Directory.h>
 #include <Entry.h>
@@ -19,13 +24,11 @@
 #include <MenuItem.h>
 #include <NodeMonitor.h>
 #include <Path.h>
+#include <Roster.h>
+#include <stdlib.h>
 #include <String.h>
 #include <Volume.h>
 #include <VolumeRoster.h>
-
-#include <AboutWindow.h>
-
-#include "AEEncoder.h"
 
 #include "AppDefs.h"
 #include "AppView.h"
@@ -410,6 +413,24 @@ AppWindow::AboutRequested()
 	PRINT(("AppWindow::AboutRequested()\n"));
 
 	BAboutWindow* about = new BAboutWindow(APPLICATION, SIGNATURE);
+	app_info info;
+	if (be_app->GetAppInfo(&info) == B_OK) {
+		BFile file(&info.ref, B_READ_ONLY);
+		BAppFileInfo appFileInfo(&file);
+		version_info versionInfo;
+		if (appFileInfo.GetVersionInfo(&versionInfo, B_APP_VERSION_KIND)
+				== B_OK) {
+			BString version;
+			version << versionInfo.major << "." << versionInfo.middle
+				<< "." << versionInfo.minor;
+			if (versionInfo.variety != B_FINAL_VERSION) {
+				const char* varietyNames[] =
+					{"development", "alpha", "beta", "gamma", "golden master" };
+				version << " (" << varietyNames[versionInfo.variety] << ")";
+			}
+			about->SetVersion(version.String());
+		}
+	}
 	about->AddExtraInfo(COMPANY_WWW);
 	about->AddExtraInfo(COMPANY);
 	about->Show();

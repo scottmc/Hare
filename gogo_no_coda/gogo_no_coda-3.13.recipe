@@ -1,0 +1,117 @@
+SUMMARY="Mp3 encoder based on LAME3.88"
+DESCRIPTION="
+Mp3 encoder based on LAME3.88, which is optimized for Enhanced 3D \
+Now!/SSE/SSE2 and dual-CPUs.
+"
+HOMEPAGE="https://github.com/teragonaudio/gogo-no-coda"
+COPYRIGHT="2001-2003 Respective gogo-no-coda creators"
+LICENSE="GNU LGPL v2"
+REVISION="3"
+SOURCE_URI="https://github.com/teragonaudio/gogo-no-coda/archive/82b1c8ccab661df3413c16435a957da393f93fcb.zip"
+CHECKSUM_SHA256="4171bd2c085af61ea2281f0ebd483f93ed9f2808ada321cea48187dbdbb4c447"
+SOURCE_FILENAME="gogo_no_coda-$portVersion.zip"
+SOURCE_DIR="gogo-no-coda-82b1c8ccab661df3413c16435a957da393f93fcb"
+PATCHES="gogo_no_coda-3.13.patch"
+
+ARCHITECTURES="x86_gcc2 x86 x86_64"
+SECONDARY_ARCHITECTURES="x86_gcc2 x86"
+
+PROVIDES="
+	gogo_no_coda$secondaryArchSuffix = $portVersion
+	cmd:gogo$secondaryArchSuffix
+	cmd:gogo_enc$secondaryArchSuffix
+	"
+REQUIRES="
+	haiku$secondaryArchSuffix
+	"
+
+BUILD_REQUIRES="
+	haiku${secondaryArchSuffix}_devel
+	"
+
+# The x86/x86_gcc2 build uses gogo's original hand-written i386 assembly
+# (MMX/3DNow!/SSE/SSE2), which needs nasm and does not exist for x86_64.
+# The x86_64 build instead compiles the plain-C fallback routines that
+# upstream already ships for non-x86 CPUs (the same code path used on
+# PowerPC), via linux/Makefile.generic, which is added by the patch.
+if [ "$targetArchitecture" != x86_64 ] ; then
+	BUILD_PREREQUIRES="
+		cmd:gcc$secondaryArchSuffix
+		cmd:ld$secondaryArchSuffix
+		cmd:make
+		cmd:nasm
+		"
+else
+	BUILD_PREREQUIRES="
+		cmd:gcc$secondaryArchSuffix
+		cmd:ld$secondaryArchSuffix
+		cmd:make
+		"
+fi
+
+# A few of the 64bit fixes sit on or right next to lines carrying Japanese
+# comments in the upstream source, which are in EUC-JP in some copies of
+# the source and already re-encoded to UTF-8 in others; a plain unified
+# diff hunk over those lines would only apply cleanly to one of the two.
+# They are applied here instead, after PATCHES, with sed/python3 edits
+# that don't depend on that comment text at all.
+PATCH()
+{
+	# engine/filehead.h: the on-disk RIFF/WAVE chunk fields were declared
+	# 'long', which is 64bit on LP64 (Haiku x86_64) even though the file
+	# format is a fixed 32bit layout. Left as 'long', every WAV is
+	# rejected with "illegal wave type" on a 64bit build.
+	sed -i 's/^\([[:space:]]*\)long\([[:space:]][[:space:]]*[A-Za-z_0-9]*;\)/\1int\2/' \
+		engine/filehead.h
+
+	# engine/newmdct.c: window_subband_sub1_C() needs external linkage on
+	# the 64bit (CPU_GENERIC) build, where it is referenced via an extern
+	# declaration in engine/vfta.h instead of only through the function
+	# pointer this file assigns for the x86 asm build.
+	sed -i 's/^static void window_subband_sub1_C(/void window_subband_sub1_C(/' \
+		engine/newmdct.c
+
+	# file_io/gogo_io.c: getWaveInfo() fills a 32bit unsigned int, but
+	# PCM_FORMAT.nSize is a size_t (64bit on LP64). Passing &nSize
+	# directly let getWaveInfo() write only the low 4 bytes and leave the
+	# high 4 bytes of nSize uninitialized. Read into a local 32bit
+	# variable and assign it across instead.
+	python3 - "$PWD/file_io/gogo_io.c" <<'PYEOF'
+import sys
+path = sys.argv[1]
+s = open(path, 'rb').read().decode('latin-1')
+old = ("\tassert(*handle != NULL);\n\n"
+       "\tif (getWaveInfo(&(pcm_format->nSize), &(pcm_format->nBit), &(pcm_format->nFreq), &(pcm_format->nChn)) != NOERR) {\n"
+       "\t\treturn ME_WAVETYPE_ERR;\n\t}\n")
+new = ("\tunsigned int waveSize;\t/* getWaveInfo() fills a 32bit value, PCM_FORMAT.nSize is a size_t */\n\n"
+       "\tassert(*handle != NULL);\n\n"
+       "\tif (getWaveInfo(&waveSize, &(pcm_format->nBit), &(pcm_format->nFreq), &(pcm_format->nChn)) != NOERR) {\n"
+       "\t\treturn ME_WAVETYPE_ERR;\n\t}\n"
+       "\tpcm_format->nSize = waveSize;\n")
+if new in s:
+	sys.exit(0)
+if old not in s:
+	sys.exit("gogo_io.c: expected anchor text not found -- upstream source changed?")
+open(path, 'wb').write(s.replace(old, new).encode('latin-1'))
+PYEOF
+}
+
+BUILD()
+{
+	cd linux
+	if [ "$targetArchitecture" = x86_64 ] ; then
+		make -f Makefile.generic $jobArgs
+	else
+		make $jobArgs
+	fi
+}
+
+INSTALL()
+{
+	cd linux
+	if [ "$targetArchitecture" = x86_64 ] ; then
+		make -f Makefile.generic install prefix=$prefix
+	else
+		make install prefix=$prefix
+	fi
+}

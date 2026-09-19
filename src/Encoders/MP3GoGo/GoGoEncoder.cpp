@@ -2,6 +2,7 @@
  * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
+#include <ctype.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -424,14 +425,12 @@ GoGoEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 				i = 0;
 			} else if (c == '%') {
 				buffer[i] = '\0';
-				char* tmp;
-				if (buffer[i-5] != ' ') {
-					break;
-				} else if (buffer[i-4] != ' ') {
-					tmp = &(buffer[i-4]);
-				} else {
-					tmp = &(buffer[i-3]);
+		int start = i;
+		while (start > 0 && (isdigit((unsigned char) buffer[start - 1])
+				|| buffer[start - 1] == '.')) {
+					start--;
 				}
+				char* tmp = &(buffer[start]);
 				curr = atof(tmp);
 				float delta = curr - prev;
 				prev = curr;
@@ -447,6 +446,7 @@ GoGoEncoder::UpdateStatus(FILE* out, BMessenger* messenger) {
 		} else if (c == 13) {
 			buffer[i] = 0;
 			PRINT(("%s\n", buffer));
+			i = 0;
 		}
 
 		if (c == 255) {
@@ -537,17 +537,17 @@ thread_id
 GoGoEncoder::CommandIO(int* filedes, int argc, const char** argv) {
 	PRINT(("GoGoEncoder::CommandIO(int*,int,const char**)\n"));
 
-	int oldstdout;
+	int oldstderr;
 
 	pipe(filedes);
-	oldstdout = dup(STDOUT_FILENO);
-	close(STDOUT_FILENO);
-	dup2(filedes[1], STDOUT_FILENO);
+	oldstderr = dup(STDERR_FILENO);
+	close(STDERR_FILENO);
+	dup2(filedes[1], STDERR_FILENO);
 
 	thread_id ret = load_image(argc, argv, (const char**)environ);
 
-	dup2(oldstdout, STDOUT_FILENO);
-	close(oldstdout);
+	dup2(oldstderr, STDERR_FILENO);
+	close(oldstderr);
 
 	return ret;
 }
