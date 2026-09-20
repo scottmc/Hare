@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #include "Settings.h"
@@ -68,6 +68,11 @@ Settings::Settings(BMessage* archive)
 	status = archive->FindMessage("columnsState", &columnsState);
 	if (status != B_OK) {
 		PRINT(("Error loading Columns State"));
+	}
+
+	status = archive->FindMessage("layoutState", &layoutState);
+	if (status != B_OK) {
+		PRINT(("Error loading Layout State"));
 	}
 
 	encoding = false;
@@ -151,6 +156,9 @@ Settings::Archive(BMessage* archive, bool deep) const
 	if (status == B_OK) {
 		status = archive->AddMessage("columnsState", &columnsState);
 	}
+	if (status == B_OK) {
+		status = archive->AddMessage("layoutState", &layoutState);
+	}
 
 	return status;
 }
@@ -205,11 +213,28 @@ Settings::SetColumnsState(BMessage* message)
 	columnsState = *message;
 }
 
+
 BMessage*
 Settings::ColumnsState()
 {
 	return &columnsState;
 }
+
+
+void
+Settings::SetLayoutState(BMessage* message)
+{
+	layoutState = *message;
+}
+
+
+BMessage*
+Settings::LayoutState()
+{
+	return &layoutState;
+}
+
+
 /*
 BRect
 Settings::WindowFrame()
@@ -217,23 +242,28 @@ Settings::WindowFrame()
 	return windowFrame;
 }
 
+
 void
 Settings::SetWindowFrame(BRect value)
 {
 	windowFrame = value;
 }
 */
+
+
 bool
 Settings::IsEncoding()
 {
 	return encoding;
 }
 
+
 void
 Settings::SetEncoding(bool value)
 {
 	encoding = value;
 }
+
 
 AEEncoder*
 Settings::Encoder()
@@ -242,6 +272,7 @@ Settings::Encoder()
 
 	return encoder;
 }
+
 
 void
 Settings::SetEncoder(AEEncoder* value)
@@ -258,6 +289,7 @@ Settings::SetEncoder(AEEncoder* value)
 	}
 }
 
+
 const char*
 Settings::EncoderName()
 {
@@ -265,6 +297,7 @@ Settings::EncoderName()
 
 	return encoderName;
 }
+
 
 void
 Settings::SetEncoderName(const char* value)
@@ -276,6 +309,7 @@ Settings::SetEncoderName(const char* value)
 	}
 }
 
+
 const char*
 Settings::PathPattern()
 {
@@ -283,6 +317,7 @@ Settings::PathPattern()
 	
 	return pathPattern;
 }
+
 
 void
 Settings::SetPathPattern(const char* value)
@@ -295,6 +330,7 @@ Settings::SetPathPattern(const char* value)
 	
 }
 
+
 const char*
 Settings::AddOnsDirectory()
 {
@@ -302,6 +338,7 @@ Settings::AddOnsDirectory()
 
 	return addonDirectory;
 }
+
 
 void
 Settings::PrintToStream()
@@ -312,4 +349,5 @@ Settings::PrintToStream()
 	PRINT(("\tPATH_PATTERN = %s\n", pathPattern));
 	PRINT(("\tIS_ENCODING = %s\n", encoding));
 	PRINT_OBJECT(columnsState);
+	PRINT_OBJECT(layoutState);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __GUI_STRINGS_H__
@@ -9,11 +9,13 @@
 
 #define ENCODE_BTN "Encode"
 #define CANCEL_BTN "Cancel"
+#define ABORT_BTN "Abort"
 #define APPLY_BTN "Apply"
 #define REVERT_BTN "Revert"
 #define ENCODER_PATTERN_BTN "Use Encoder Pattern"
 
 #define STATUS_LABEL "Encoding Song: "
+#define RIPPING_LABEL "Ripping Song: "
 #define STATUS_TRAILING_LABEL "Songs Remaining: "
 
 #define OK "Ok"
@@ -30,6 +32,7 @@
 #define SELECT_ALL "Select All"
 #define DESELECT_ALL "Deselect All"
 #define REMOVE "Remove"
+#define SAVE_LAYOUT "Save Layout"
 #define PREFS "Preferences"
 
 #define COLUMN_MENU		"Columns"

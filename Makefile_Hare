@@ -25,6 +25,7 @@ SRCS = \
 	 src/Hare/AppView.cpp  \
 	 src/Hare/AppWindow.cpp  \
 	 src/Hare/CheckMark.cpp  \
+	 src/Hare/CoverArtView.cpp \
 	 src/Hare/EditorView.cpp  \
 	 src/Hare/EncoderListView.cpp  \
 	 src/Hare/PrefWindow.cpp  \

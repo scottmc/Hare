@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __PREFERENCES_H__
@@ -44,6 +44,9 @@ public:
 	void SetColumnsState(BMessage* message);
 	BMessage* ColumnsState();
 
+	void SetLayoutState(BMessage* message);
+	BMessage* LayoutState();
+
 	void PrintToStream();
 private:
 //	BRect windowFrame;
@@ -53,8 +56,9 @@ private:
 	char pathPattern[B_PATH_NAME_LENGTH];
 	char addonDirectory[B_PATH_NAME_LENGTH];
 	BMessage columnsState;
-
+	BMessage layoutState;
 };
+
 
 extern Settings* settings;
 

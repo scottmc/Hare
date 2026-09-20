@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __APP_VIEW_H__
@@ -14,9 +14,11 @@
 class BButton;
 class BMessage;
 class BRect;
+class BSplitView;
 class BStatusBar;
 class BStringView;
 class BTextControl;
+class CoverArtView;
 class EditorView;
 class EncoderListView;
 class PrefWindow;
@@ -28,6 +30,8 @@ public:
 	virtual void AttachedToWindow();
 	virtual void MessageReceived(BMessage* message);
 	virtual void RefsReceived(BMessage* message);
+	void SaveLayout();
+	void RestoreLayout();
 private:
 	void InitView();
 	void InitializeColumn(BRefRow* row);
@@ -48,6 +52,10 @@ private:
 	EditorView* editorView;
 	BBox* editorBoxView;
 	BScrollView* editorScrollView;
+	CoverArtView* coverArtView;
+	BBox* coverArtBoxView;
+	BSplitView* topSplitView;
+	BSplitView* mainSplitView;
 	BButton* encodeButton;
 	BButton* cancelButton;
 	BStatusBar* statusBar;

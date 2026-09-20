@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __COMMAND_CONSTANTS_H__
@@ -31,6 +31,7 @@
 #define SAVE_PREFS '028'
 #define REVERT_PREFS '029'
 #define ENCODER_PATTERN_PREFS '030'
+#define SAVE_LAYOUT_MSG '031'
 
 #define NUM_OF_COLUMNS 10
 #define COMPLETE_COLUMN_INDEX 0

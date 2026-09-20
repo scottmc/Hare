@@ -44,7 +44,14 @@ AppWindow::AppWindow()
 	PRINT(("AppWindow::AppWindow()\n"));
 
 	InitWindow();
-	CenterOnScreen();
+
+	BRect frame;
+	if (settings->LayoutState()->FindRect("windowFrame", &frame) == B_OK) {
+		MoveTo(frame.LeftTop());
+		ResizeTo(frame.Width(), frame.Height());
+	} else {
+		CenterOnScreen();
+	}
 }
 
 AppWindow::~AppWindow()
@@ -153,6 +160,8 @@ AppWindow::InitMenus()
 	editMenu->AddItem(new BMenuItem(REMOVE,
 									new BMessage(MENU_ITEM_SELECTED), 'R'));
 	editMenu->AddSeparatorItem();
+	editMenu->AddItem(new BMenuItem(SAVE_LAYOUT,
+									new BMessage(MENU_ITEM_SELECTED), 'L', B_OPTION_KEY));
 	editMenu->AddItem(new BMenuItem(PREFS,
 									new BMessage(MENU_ITEM_SELECTED), 'P'));
 
@@ -315,6 +324,9 @@ AppWindow::MenuItemSelected(BMessage* message)
 				viewMessenger->SendMessage(&msg);
 			} else if (strcmp(item->Label(), REMOVE) == 0) {
 				BMessage msg(REMOVE_MSG);
+				viewMessenger->SendMessage(&msg);
+			} else if (strcmp(item->Label(), SAVE_LAYOUT) == 0) {
+				BMessage msg(SAVE_LAYOUT_MSG);
 				viewMessenger->SendMessage(&msg);
 			} else if (strcmp(item->Label(), PREFS) == 0) {
 				BMessage msg(PREFS_MSG);

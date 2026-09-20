@@ -6,11 +6,15 @@
 #include <Beep.h>
 #include <Bitmap.h>
 #include <Button.h>
+#include <ColumnListView.h>
+#include <ColumnTypes.h>
+#include <ctype.h>
 #include <Debug.h>
 #include <Font.h>
 #include <Directory.h>
 #include <Entry.h>
 #include <File.h>
+#include <FindDirectory.h>
 #include <fs_attr.h>
 #include <fs_info.h>
 #include <image.h>
@@ -27,6 +31,7 @@
 #include <Rect.h>
 #include <ScrollBar.h>
 #include <ScrollView.h>
+#include <SplitView.h>
 #include <StatusBar.h>
 #include <StringView.h>
 #include <String.h>
@@ -34,19 +39,16 @@
 #include <Volume.h>
 #include <VolumeRoster.h>
 
-#include <ColumnListView.h>
-#include <ColumnTypes.h>
-
 #include "AEEncoder.h"
-#include "AudioAttributes.h"
-#include "GenreList.h"
-
 #include "AppDefs.h"
 #include "AppWindow.h"
+#include "AudioAttributes.h"
 #include "CommandConstants.h"
 #include "CheckMark.h"
+#include "CoverArtView.h"
 #include "EditorView.h"
 #include "EncoderListView.h"
+#include "GenreList.h"
 #include "GUIStrings.h"
 #include "PrefWindow.h"
 #include "RefRow.h"
@@ -109,7 +111,12 @@ AppView::InitView()
 	editorBoxView->SetLabel(EDITOR_LABEL);
 	editorBoxView->SetExplicitMinSize(BSize(0, 125));
 	editorBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
-	
+	coverArtView = new CoverArtView();
+
+	coverArtBoxView = new BBox("coverArtBoxView");
+	coverArtBoxView->SetExplicitMinSize(BSize(100, 125));
+	coverArtBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+
 	encodeButton = new BButton("encodeButton", ENCODE_BTN,
 							   new BMessage(ENCODE_MSG));
 	cancelButton = new BButton("cancelButton", CANCEL_BTN,
@@ -130,12 +137,25 @@ AppView::InitView()
 					B_USE_DEFAULT_SPACING, B_USE_BIG_INSETS)
 		.Add(editorScrollView, 0.0f)
 	.End();
-	
+
+	BLayoutBuilder::Group<>(coverArtBoxView, B_HORIZONTAL)
+		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
+					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
+		.Add(coverArtView, 0.0f)
+	.End();
+
+	topSplitView = new BSplitView(B_HORIZONTAL, B_USE_HALF_ITEM_SPACING);
+	topSplitView->AddChild(editorBoxView, 2.0f);
+	topSplitView->AddChild(coverArtBoxView, 1.0f);
+	topSplitView->SetCollapsible(0, false);
+	topSplitView->SetCollapsible(1, false);
+
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS, 
 						B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS)
 		.AddSplit(B_VERTICAL, B_USE_HALF_ITEM_SPACING)
-			.Add(editorBoxView, 0.0f)
+			.GetSplitView(&mainSplitView)
+			.Add(topSplitView, 0.0f)
 			.Add(listView, 0.0f)
 		.End()
 		.AddGroup(B_HORIZONTAL)
@@ -191,6 +211,10 @@ AppView::MessageReceived(BMessage* message)
 				Cancel();
 			}
 			break;
+		case SAVE_LAYOUT_MSG: {
+				SaveLayout();
+			}
+			break;
 		case SELECT_ALL_MSG:
 			if (listView->CountRows() > 0) {
 				for (int index = 0; index < listView->CountRows(); index++){
@@ -226,6 +250,7 @@ AppView::MessageReceived(BMessage* message)
 				ApplyAttributeChanges(message);
 			}
 			break;
+		case ENCODER_CHANGED:
 		case FILE_NAME_PATTERN_CHANGED: {
 				int32 numRows = listView->CountRows();
 				for (int i = 0; i < numRows; i++) {
@@ -371,30 +396,48 @@ AppView::InitializeColumn(BRefRow* row)
 
 	row->SetField(new BStringField(ref->name), FILE_COLUMN_INDEX);
 
+	BString defaultTitle(ref->name);
+	int32 extensionIndex = defaultTitle.FindLast(".");
+	if (extensionIndex >= 0) {
+		defaultTitle.Truncate(extensionIndex);
+	}
+	int32 titleStart = 0;
+	while (titleStart < defaultTitle.Length()
+			&& isdigit((unsigned char) defaultTitle[titleStart])) {
+		titleStart++;
+	}
+	if (titleStart > 0 && titleStart <= 3) {
+		int32 separatorStart = titleStart;
+		while (titleStart < defaultTitle.Length()
+				&& strchr(" .-_", defaultTitle[titleStart]) != NULL) {
+			titleStart++;
+		}
+		if (titleStart > separatorStart && titleStart < defaultTitle.Length()) {
+			defaultTitle.Remove(0, titleStart);
+		}
+	}
+	row->SetField(new BStringField(defaultTitle.String()), TITLE_COLUMN_INDEX);
+
 	BVolume volume(ref->device);
 	fs_info fsinfo;
 	fs_stat_dev(volume.Device(), &fsinfo);
 	if (strcmp(fsinfo.fsh_name, "cdda") == 0) {
 		char volume_name[B_FILE_NAME_LENGTH];
 		volume.GetName(volume_name);
+
 		if (strcmp(volume_name, "Audio CD") != 0) {
 			BString artist(volume_name);
 			int index = artist.FindFirst(" - ");
-			artist.Truncate(index);
-			BString album(volume_name);
-			index += 3;
-			album.Remove(index, album.Length() - index);
-			artist.Trim();
-			album.Trim();
-			BString title(ref->name);
-			title.Truncate(title.FindLast("."));
-			row->SetField(new BStringField(artist.String()), ARTIST_COLUMN_INDEX);
-			row->SetField(new BStringField(album.String()), ALBUM_COLUMN_INDEX);
-			row->SetField(new BStringField(title.String()), TITLE_COLUMN_INDEX);
-		} else {
-			row->SetField(new BStringField((const char*)0), ARTIST_COLUMN_INDEX);
-			row->SetField(new BStringField((const char*)0), ALBUM_COLUMN_INDEX);
-			row->SetField(new BStringField((const char*)0), TITLE_COLUMN_INDEX);
+			if (index >= 0) {
+				artist.Truncate(index);
+				BString album(volume_name);
+				index += 3;
+				album.Remove(index, album.Length() - index);
+				artist.Trim();
+				album.Trim();
+				row->SetField(new BStringField(artist.String()), ARTIST_COLUMN_INDEX);
+				row->SetField(new BStringField(album.String()), ALBUM_COLUMN_INDEX);
+			}
 		}
 	}
 
@@ -723,10 +766,149 @@ AppView::UpdateItem(BMessage* message)
 			}
 		}
 	}
-
-
 	return B_OK;
 }
+
+namespace {
+class TempCDCopy {
+public:
+ 	TempCDCopy(const entry_ref* ref, const BPath& originalPath,
+		BMessenger* progressMessenger = NULL)
+		:
+		fPath(originalPath),
+		fIsTemp(false),
+		fCanceled(false)
+	{
+		BVolume volume(ref->device);
+		fs_info info;
+		if (fs_stat_dev(volume.Device(), &info) != B_OK
+				|| strcmp(info.fsh_name, "cdda") != 0) {
+			return;
+		}
+
+		BPath tempDir;
+		if (find_directory(B_SYSTEM_TEMP_DIRECTORY, &tempDir) != B_OK) {
+			PRINT(("TempCDCopy: can't find temp directory, "
+				"encoding directly from CD\n"));
+			return;
+		}
+		tempDir.Append("Hare-rip");
+		if (create_directory(tempDir.Path(), 0777) != B_OK) {
+			PRINT(("TempCDCopy: can't create temp directory, "
+				"encoding directly from CD\n"));
+			return;
+		}
+
+		BString tempName;
+		tempName << find_thread(NULL) << "-" << system_time()
+			<< "-" << ref->name;
+		BPath tempPath(tempDir.Path(), tempName.String());
+
+		PRINT(("TempCDCopy: copying %s to %s\n", originalPath.Path(),
+			tempPath.Path()));
+		status_t copyStatus = Copy(originalPath.Path(), tempPath.Path(),
+			progressMessenger);
+		if (copyStatus == B_OK) {
+			fPath = tempPath;
+			fIsTemp = true;
+		} else {
+			if (copyStatus == FSS_CANCEL_ENCODING) {
+				PRINT(("TempCDCopy: copy canceled\n"));
+				fCanceled = true;
+			} else {
+				PRINT(("TempCDCopy: copy failed, encoding directly from CD\n"));
+			}
+			BEntry(tempPath.Path()).Remove();
+		}
+	}
+
+	~TempCDCopy()
+	{
+		if (fIsTemp) {
+			BEntry(fPath.Path()).Remove();
+		}
+	}
+
+	const char* Path() const { return fPath.Path(); }
+	bool WasCanceled() const { return fCanceled; }
+
+private:
+	static bool IsCanceled()
+	{
+		thread_id thread = find_thread(NULL);
+		if (has_data(thread)) {
+			thread_id sender;
+			int32 code = receive_data(&sender, 0, 0);
+			if (code == FSS_CANCEL_ENCODING) {
+				return true;
+			}
+		}
+		return false;
+	}
+	static status_t Copy(const char* srcPath, const char* dstPath,
+		BMessenger* progressMessenger)
+	{
+		BFile src(srcPath, B_READ_ONLY);
+		status_t status = src.InitCheck();
+		if (status != B_OK) {
+			return status;
+		}
+
+		BFile dst(dstPath, B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
+		status = dst.InitCheck();
+		if (status != B_OK) {
+			return status;
+		}
+
+		off_t totalSize = 0;
+		bool haveTotalSize = (src.GetSize(&totalSize) == B_OK)
+			&& (totalSize > 0);
+		bool reportProgress = progressMessenger
+			&& progressMessenger->IsValid() && haveTotalSize;
+
+		// Heap-allocated rather than a stack buffer: this runs on the
+		// spawned "_Encoder_" thread, 256 KB - large, sequential I/O from CD
+		const size_t bufferSize = 262144;
+		char* buffer = new char[bufferSize];
+
+		status_t result = B_OK;
+		ssize_t bytesRead;
+		off_t bytesCopied = 0;
+		float prevPercent = 0.0f;
+		while ((bytesRead = src.Read(buffer, bufferSize)) > 0) {
+			if (IsCanceled()) {
+				PRINT(("TempCDCopy: cancel requested mid-copy\n"));
+				result = FSS_CANCEL_ENCODING;
+				break;
+			}
+			ssize_t bytesWritten = dst.Write(buffer, bytesRead);
+			if (bytesWritten != bytesRead) {
+				result = B_IO_ERROR;
+				break;
+			}
+			if (reportProgress) {
+				bytesCopied += bytesRead;
+				float percent = (100.0f * bytesCopied) / totalSize;
+				BMessage updateMsg(B_UPDATE_STATUS_BAR);
+				updateMsg.AddFloat("delta", percent - prevPercent);
+				progressMessenger->SendMessage(&updateMsg);
+				prevPercent = percent;
+			}
+		}
+		if ((result == B_OK) && (bytesRead < 0)) {
+			result = (status_t)bytesRead;
+		}
+		delete[] buffer;
+		return result;
+	}
+
+	BPath fPath;
+	bool fIsTemp;
+	bool fCanceled;
+};
+
+} //namespace
+
 
 void
 AppView::Encode()
@@ -766,7 +948,8 @@ AppView::EncodeThread(void* args)
 	if (view->LockLooper()) {
 		view->editorView->SetEnabled(false);
 		view->encodeButton->SetEnabled(false);
-		view->cancelButton->SetEnabled(false);
+		view->cancelButton->SetLabel(ABORT_BTN);
+		view->cancelButton->SetEnabled(true);
 		view->Invalidate();
 		menuBar->SetEnabled(false);
 		menuBar->Invalidate();
@@ -846,7 +1029,6 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetEnabled(true);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -895,6 +1077,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
 				view->cancelButton->SetEnabled(true);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
@@ -920,6 +1103,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
 				view->cancelButton->SetEnabled(true);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
@@ -942,6 +1126,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
 				view->cancelButton->SetEnabled(true);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
@@ -954,7 +1139,49 @@ AppView::EncodeThread(void* args)
 			return B_ERROR;
 		}
 
-		const char* inputFile = path.Path();
+		if (view->LockLooper()) {
+			BString ripping(RIPPING_LABEL);
+			ripping << path.Leaf();
+			BString remaining(STATUS_TRAILING_LABEL);
+			remaining << (numRows - i);
+			view->statusBar->Reset(ripping.String(), remaining.String());
+			view->UnlockLooper();
+		}
+		TempCDCopy tempCopy(ref, path, &statusBarMessenger);
+		if (tempCopy.WasCanceled()) {
+			PRINT(("User canceled during CD rip.\n"));
+			if (view->LockLooper()) {
+				BString remaining(STATUS_TRAILING_LABEL);
+				remaining << 0;
+				view->statusBar->Reset(STATUS_LABEL, remaining.String());
+				view->editorView->SetEnabled(true);
+				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
+				view->cancelButton->SetEnabled(true);
+				view->Invalidate();
+				menuBar->SetEnabled(true);
+				menuBar->Invalidate();
+				view->UnlockLooper();
+			}
+			settings->SetEncoding(false);
+			encoder->UninitEncoder();
+			BEntry outputEntry(outputFile);
+			outputEntry.Remove();
+			while (1) {
+				BDirectory directory(outputParent.Path());
+				if (directory.CountEntries() > 0) {
+					break;
+				}
+				directory.Unset();
+				BEntry dirEntry(outputParent.Path());
+				dirEntry.Remove();
+				dirEntry.Unset();
+				outputParent.GetParent(&outputParent);
+			}
+			system_beep(SYSTEM_BEEP_ENCODING_DONE);
+			return B_OK;
+		}
+		const char* inputFile = tempCopy.Path();
 
 		if (view->LockLooper()) {
 			BString encoding(STATUS_LABEL);
@@ -1010,6 +1237,7 @@ AppView::EncodeThread(void* args)
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
 						view->editorView->SetEnabled(true);
 						view->encodeButton->SetEnabled(true);
+						view->cancelButton->SetLabel(CANCEL_BTN);
 						view->cancelButton->SetEnabled(true);
 						view->Invalidate();
 						menuBar->SetEnabled(true);
@@ -1035,6 +1263,7 @@ AppView::EncodeThread(void* args)
 							view->statusBar->Reset(STATUS_LABEL, remaining.String());
 							view->editorView->SetEnabled(true);
 							view->encodeButton->SetEnabled(true);
+							view->cancelButton->SetLabel(CANCEL_BTN);
 							view->cancelButton->SetEnabled(true);
 							view->Invalidate();
 							menuBar->SetEnabled(true);
@@ -1057,6 +1286,7 @@ AppView::EncodeThread(void* args)
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
 						view->editorView->SetEnabled(true);
 						view->encodeButton->SetEnabled(true);
+						view->cancelButton->SetLabel(CANCEL_BTN);
 						view->cancelButton->SetEnabled(true);
 						view->Invalidate();
 						menuBar->SetEnabled(true);
@@ -1097,6 +1327,7 @@ AppView::EncodeThread(void* args)
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
 						view->editorView->SetEnabled(true);
 						view->encodeButton->SetEnabled(true);
+						view->cancelButton->SetLabel(CANCEL_BTN);
 						view->cancelButton->SetEnabled(true);
 						view->Invalidate();
 						menuBar->SetEnabled(true);
@@ -1128,6 +1359,7 @@ AppView::EncodeThread(void* args)
 		view->statusBar->Reset(STATUS_LABEL, remaining.String());
 		view->editorView->SetEnabled(true);
 		view->encodeButton->SetEnabled(true);
+		view->cancelButton->SetLabel(CANCEL_BTN);
 		view->cancelButton->SetEnabled(true);
 		view->Invalidate();
 		menuBar->SetEnabled(true);
@@ -1138,6 +1370,61 @@ AppView::EncodeThread(void* args)
 	system_beep(SYSTEM_BEEP_ENCODING_DONE);
 	return B_OK;
 }
+
+
+void
+AppView::SaveLayout()
+{
+	PRINT(("AppView::SaveLayout()\n"));
+
+	BMessage layout;
+
+	if (Window()) {
+		layout.AddRect("windowFrame", Window()->Frame());
+	}
+
+	// Splitter positions aren't tracked anywhere as a single "position"
+	// value - what actually reflects where the user left them is each
+	// side's current on-screen size, so that's what gets saved (and later
+	// handed straight back to BSplitView::SetItemWeight() as the weight,
+	// which works fine since only the ratio between the two matters).
+	if (topSplitView && (topSplitView->CountChildren() == 2)) {
+		layout.AddFloat("topSplitWeight", topSplitView->ChildAt(0)->Frame().Width());
+		layout.AddFloat("topSplitWeight", topSplitView->ChildAt(1)->Frame().Width());
+	}
+
+	if (mainSplitView && (mainSplitView->CountChildren() == 2)) {
+		layout.AddFloat("mainSplitWeight", mainSplitView->ChildAt(0)->Frame().Height());
+		layout.AddFloat("mainSplitWeight", mainSplitView->ChildAt(1)->Frame().Height());
+	}
+
+	settings->SetLayoutState(&layout);
+	settings->SaveSettings();
+}
+
+void
+AppView::RestoreLayout()
+{
+	PRINT(("AppView::RestoreLayout()\n"));
+
+	BMessage* layout = settings->LayoutState();
+
+	float weight0, weight1;
+	if (topSplitView
+			&& (layout->FindFloat("topSplitWeight", 0, &weight0) == B_OK)
+			&& (layout->FindFloat("topSplitWeight", 1, &weight1) == B_OK)) {
+		topSplitView->SetItemWeight(0, weight0, false);
+		topSplitView->SetItemWeight(1, weight1, true);
+	}
+
+	if (mainSplitView
+			&& (layout->FindFloat("mainSplitWeight", 0, &weight0) == B_OK)
+			&& (layout->FindFloat("mainSplitWeight", 1, &weight1) == B_OK)) {
+		mainSplitView->SetItemWeight(0, weight0, false);
+		mainSplitView->SetItemWeight(1, weight1, true);
+	}
+}
+
 
 void
 AppView::Cancel()
