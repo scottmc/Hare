@@ -1,14 +1,13 @@
 #include "AppView.h"
 
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <Alert.h>
 #include <Beep.h>
 #include <Bitmap.h>
 #include <Button.h>
-#include <ColumnListView.h>
-#include <ColumnTypes.h>
-#include <ctype.h>
 #include <Debug.h>
 #include <Font.h>
 #include <Directory.h>
@@ -39,16 +38,26 @@
 #include <Volume.h>
 #include <VolumeRoster.h>
 
+#include <ColumnListView.h>
+#include <ColumnTypes.h>
+
+#include <fileref.h>
+#include <tag.h>
+#include <tpropertymap.h>
+#include <tstringlist.h>
+
 #include "AEEncoder.h"
+#include "AudioAttributes.h"
+#include "GenreList.h"
+#include "MusicBrainzAttributes.h"
+
 #include "AppDefs.h"
 #include "AppWindow.h"
-#include "AudioAttributes.h"
 #include "CommandConstants.h"
 #include "CheckMark.h"
 #include "CoverArtView.h"
 #include "EditorView.h"
 #include "EncoderListView.h"
-#include "GenreList.h"
 #include "GUIStrings.h"
 #include "PrefWindow.h"
 #include "RefRow.h"
@@ -79,7 +88,11 @@
 
 AppView::AppView()
 	:
-	BView("AppView", B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE_JUMP)
+	BView("AppView", B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE_JUMP),
+	coverArtImageData(NULL),
+	coverArtImageSize(0),
+	fLastCheckedFreeBytes(-1),
+	mbTrackMetadata(NULL)
 {
 	PRINT(("AppView::AppView(BRect)\n"));
 
@@ -90,6 +103,9 @@ AppView::~AppView()
 	PRINT(("AppView::~AppView()\n"));
 
 	stop_watching(this);
+
+	delete[] (unsigned char*)coverArtImageData;
+	delete mbTrackMetadata;
 }
 
 void
@@ -111,6 +127,7 @@ AppView::InitView()
 	editorBoxView->SetLabel(EDITOR_LABEL);
 	editorBoxView->SetExplicitMinSize(BSize(0, 125));
 	editorBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+
 	coverArtView = new CoverArtView();
 
 	coverArtBoxView = new BBox("coverArtBoxView");
@@ -144,6 +161,11 @@ AppView::InitView()
 		.Add(coverArtView, 0.0f)
 	.End();
 
+	// Details editor and cover art side by side, with a vertical splitter
+	// between them, sitting above the horizontal splitter that separates
+	// this row from the track list below. Both BSplitViews are kept as
+	// members so SaveLayout()/RestoreLayout() can read back and reapply
+	// their current proportions.
 	topSplitView = new BSplitView(B_HORIZONTAL, B_USE_HALF_ITEM_SPACING);
 	topSplitView->AddChild(editorBoxView, 2.0f);
 	topSplitView->AddChild(coverArtBoxView, 1.0f);
@@ -151,7 +173,7 @@ AppView::InitView()
 	topSplitView->SetCollapsible(1, false);
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
-		.SetInsets(B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS, 
+		.SetInsets(B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS,
 						B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS)
 		.AddSplit(B_VERTICAL, B_USE_HALF_ITEM_SPACING)
 			.GetSplitView(&mainSplitView)
@@ -215,6 +237,87 @@ AppView::MessageReceived(BMessage* message)
 				SaveLayout();
 			}
 			break;
+		case COVER_ART_FOUND: {
+				// Sent by MusicBrainzLookup (on its own thread) once it's
+				// found - or failed to find - cover art for the disc most
+				// recently loaded. Display it right away; the original
+				// compressed bytes are kept around so EncodeThread() can
+				// write them out alongside the encoded files later.
+				BBitmap* bitmap = NULL;
+				message->FindPointer("bitmap", (void**)&bitmap);
+				if (bitmap) {
+					coverArtView->SetCoverArt(bitmap);
+				}
+
+				const void* data;
+				ssize_t size;
+				if (message->FindData("imageData", B_RAW_TYPE, &data, &size)
+						== B_OK) {
+					delete[] (unsigned char*)coverArtImageData;
+					coverArtImageData = new unsigned char[size];
+					memcpy(coverArtImageData, data, size);
+					coverArtImageSize = (size_t)size;
+
+					const unsigned char* bytes = (const unsigned char*)data;
+					if ((size >= 8) && (bytes[0] == 0x89) && (bytes[1] == 'P')
+							&& (bytes[2] == 'N') && (bytes[3] == 'G')) {
+						coverArtImageExt = "png";
+					} else if ((size >= 3) && (bytes[0] == 0xFF)
+							&& (bytes[1] == 0xD8) && (bytes[2] == 0xFF)) {
+						coverArtImageExt = "jpg";
+					} else if ((size >= 4) && (bytes[0] == 'G')
+							&& (bytes[1] == 'I') && (bytes[2] == 'F')) {
+						coverArtImageExt = "gif";
+					} else {
+						// The Cover Art Archive serves mostly JPEG/PNG - a
+						// reasonable default for anything else unrecognized.
+						coverArtImageExt = "jpg";
+					}
+				}
+			}
+			break;
+		case METADATA_FOUND: {
+				// Sent by MusicBrainzLookup (on its own thread) alongside
+				// (or instead of - the two are independent) COVER_ART_FOUND,
+				// once it's found release/track metadata for the disc most
+				// recently loaded. Just stored for now; EncodeThread() reads
+				// it back out once each track finishes encoding.
+				const char* str;
+				if (message->FindString("discId", &str) == B_OK) {
+					mbDiscId = str;
+				}
+				if (message->FindString("releaseId", &str) == B_OK) {
+					mbReleaseId = str;
+				}
+				if (message->FindString("releaseGroupId", &str) == B_OK) {
+					mbReleaseGroupId = str;
+				}
+				if (message->FindString("artistId", &str) == B_OK) {
+					mbArtistId = str;
+				}
+
+				delete mbTrackMetadata;
+				mbTrackMetadata = new BObjectList<TrackMBMetadata, true>(20);
+
+				int32 trackNumber;
+				for (int32 i = 0; message->FindInt32("trackNumber", i,
+						&trackNumber) == B_OK; i++) {
+					const char* trackTitle = "";
+					const char* trackArtist = "";
+					const char* recordingId = "";
+					message->FindString("trackTitle", i, &trackTitle);
+					message->FindString("trackArtist", i, &trackArtist);
+					message->FindString("recordingId", i, &recordingId);
+
+					TrackMBMetadata* track = new TrackMBMetadata();
+					track->number = trackNumber;
+					track->title = trackTitle;
+					track->artist = trackArtist;
+					track->recordingId = recordingId;
+					mbTrackMetadata->AddItem(track);
+				}
+			}
+			break;
 		case SELECT_ALL_MSG:
 			if (listView->CountRows() > 0) {
 				for (int index = 0; index < listView->CountRows(); index++){
@@ -252,9 +355,13 @@ AppView::MessageReceived(BMessage* message)
 			break;
 		case ENCODER_CHANGED:
 		case FILE_NAME_PATTERN_CHANGED: {
+				// Also fired when the user picks a different encoder from
+				// the Encoder menu - refresh every row's output filename
+				// against whichever encoder's pattern (and file extension)
+				// is now selected.
 				int32 numRows = listView->CountRows();
 				for (int i = 0; i < numRows; i++) {
-					BRefRow* row = 
+					BRefRow* row =
 						(BRefRow*) listView->RowAt(i);
 					SetSaveAsColumn(row);
 					listView->InvalidateRow(row);
@@ -396,11 +503,27 @@ AppView::InitializeColumn(BRefRow* row)
 
 	row->SetField(new BStringField(ref->name), FILE_COLUMN_INDEX);
 
+	// Fall back to a title derived from the file name for every row by
+	// default; anything more specific found below (a CD volume's "Artist
+	// - Album" name, real BFS attributes) overrides it. Plenty of WAV
+	// files never carry real tag data of their own - CD tracks off a
+	// disc without CD-Text/CDDB, or files dragged in from a folder that
+	// was copied without preserving BFS attributes (a plain filesystem
+	// copy generally doesn't preserve them, especially across a non-BFS
+	// volume) - and a name derived from the file beats a blank title.
 	BString defaultTitle(ref->name);
 	int32 extensionIndex = defaultTitle.FindLast(".");
 	if (extensionIndex >= 0) {
 		defaultTitle.Truncate(extensionIndex);
 	}
+
+	// Haiku's cdda driver (and most rippers) name each track's file with
+	// a leading track number - "05 Mr. Brownstone.wav" - so strip a
+	// leading 1-3 digit number plus whatever run of spaces/"."/"-"/"_"
+	// separates it from the rest ("05 ", "05. ", "05 - ", "05-", ...)
+	// before using what's left as the title. Only strips when there's
+	// still something left afterward, so a title that's *only* digits
+	// (track number and nothing else) is left alone.
 	int32 titleStart = 0;
 	while (titleStart < defaultTitle.Length()
 			&& isdigit((unsigned char) defaultTitle[titleStart])) {
@@ -416,6 +539,7 @@ AppView::InitializeColumn(BRefRow* row)
 			defaultTitle.Remove(0, titleStart);
 		}
 	}
+
 	row->SetField(new BStringField(defaultTitle.String()), TITLE_COLUMN_INDEX);
 
 	BVolume volume(ref->device);
@@ -766,13 +890,35 @@ AppView::UpdateItem(BMessage* message)
 			}
 		}
 	}
+
+
 	return B_OK;
 }
 
 namespace {
+
+// Encoders read their input file sequentially, one buffer at a time, which
+// is fine on a local disk but slow when the ref points at a track on a
+// live "cdda" (audio CD) volume: every read there is real optical-drive
+// I/O, often well under 1x realtime and hurt further by an encoder that
+// only reads in small chunks. Copying the whole track to local disk first
+// with a single, large, sequential read/write loop and encoding from that
+// copy instead is dramatically faster in practice, and it's what CD
+// rippers generally do rather than encoding directly off the disc.
+//
+// TempCDCopy is a small RAII helper: constructing it does the copy (a
+// no-op, falling back to the original path, for anything not on a cdda
+// volume) and its destructor removes the temp copy, so a track's temp
+// file is cleaned up automatically at the end of its loop iteration no
+// matter which of EncodeThread()'s many early-return paths gets taken.
 class TempCDCopy {
 public:
- 	TempCDCopy(const entry_ref* ref, const BPath& originalPath,
+	// progressMessenger, when given, gets sent B_UPDATE_STATUS_BAR
+	// messages (the same protocol the encoders already use on this same
+	// messenger/statusBar) as the copy proceeds, so a slow optical drive
+	// shows real progress during the rip instead of sitting at 0% until
+	// encoding starts.
+	TempCDCopy(const entry_ref* ref, const BPath& originalPath,
 		BMessenger* progressMessenger = NULL)
 		:
 		fPath(originalPath),
@@ -818,6 +964,8 @@ public:
 			} else {
 				PRINT(("TempCDCopy: copy failed, encoding directly from CD\n"));
 			}
+			// Tidy up the partial copy either way - a canceled rip and a
+			// failed one both leave an incomplete file behind otherwise.
 			BEntry(tempPath.Path()).Remove();
 		}
 	}
@@ -833,6 +981,9 @@ public:
 	bool WasCanceled() const { return fCanceled; }
 
 private:
+	// Same poll AEEncoder::CheckForCancel() does against this same
+	// "_Encoder_" thread's data queue - Copy() runs on that thread too, so
+	// find_thread(NULL) here is that thread.
 	static bool IsCanceled()
 	{
 		thread_id thread = find_thread(NULL);
@@ -845,6 +996,7 @@ private:
 		}
 		return false;
 	}
+
 	static status_t Copy(const char* srcPath, const char* dstPath,
 		BMessenger* progressMessenger)
 	{
@@ -867,8 +1019,10 @@ private:
 			&& progressMessenger->IsValid() && haveTotalSize;
 
 		// Heap-allocated rather than a stack buffer: this runs on the
-		// spawned "_Encoder_" thread, 256 KB - large, sequential I/O from CD
-		const size_t bufferSize = 262144;
+		// spawned "_Encoder_" thread, which doesn't get a large stack, and
+		// 256 KB of locals here was enough to overflow it (crashing inside
+		// this function, or in whichever caller's frame pushed it over).
+		const size_t bufferSize = 262144; // 256 KB - large, sequential I/O
 		char* buffer = new char[bufferSize];
 
 		status_t result = B_OK;
@@ -876,16 +1030,22 @@ private:
 		off_t bytesCopied = 0;
 		float prevPercent = 0.0f;
 		while ((bytesRead = src.Read(buffer, bufferSize)) > 0) {
+			// Checked once per chunk (same as the encoders' own status
+			// polling) rather than just leaving cancellation to be noticed
+			// once the whole track has been copied and handed off to the
+			// encoder - a slow rip otherwise looks unresponsive to Abort.
 			if (IsCanceled()) {
 				PRINT(("TempCDCopy: cancel requested mid-copy\n"));
 				result = FSS_CANCEL_ENCODING;
 				break;
 			}
+
 			ssize_t bytesWritten = dst.Write(buffer, bytesRead);
 			if (bytesWritten != bytesRead) {
 				result = B_IO_ERROR;
 				break;
 			}
+
 			if (reportProgress) {
 				bytesCopied += bytesRead;
 				float percent = (100.0f * bytesCopied) / totalSize;
@@ -898,6 +1058,7 @@ private:
 		if ((result == B_OK) && (bytesRead < 0)) {
 			result = (status_t)bytesRead;
 		}
+
 		delete[] buffer;
 		return result;
 	}
@@ -907,13 +1068,185 @@ private:
 	bool fCanceled;
 };
 
-} //namespace
+// Small RAII holder for the cover art bytes EncodeThread() captures (once,
+// under the looper lock) from the view right at the start of a run. Freed
+// automatically by the destructor on every one of EncodeThread()'s many
+// early-return paths, the same reasoning TempCDCopy above uses for the rip
+// temp file - saves duplicating cleanup at each return site.
+class CoverArtBuffer {
+public:
+	CoverArtBuffer()
+		:
+		fData(NULL),
+		fSize(0)
+	{
+	}
 
+	~CoverArtBuffer()
+	{
+		delete[] fData;
+	}
+
+	void SetTo(const void* data, size_t size, const BString& extension)
+	{
+		delete[] fData;
+		fData = NULL;
+		fSize = 0;
+		if (data && (size > 0)) {
+			fData = new unsigned char[size];
+			memcpy(fData, data, size);
+			fSize = size;
+		}
+		fExtension = extension;
+	}
+
+	bool HasData() const { return (fData != NULL) && (fSize > 0); }
+	const void* Data() const { return fData; }
+	size_t Size() const { return fSize; }
+	const BString& Extension() const { return fExtension; }
+
+private:
+	unsigned char* fData;
+	size_t fSize;
+	BString fExtension;
+};
+
+} // namespace
+
+namespace {
+
+// Rough free-space guesses for the low-disk-space warning below - not
+// meant to be exact, just enough to catch "you're about to run out"
+// before a long encode run fails partway through and leaves partial
+// output files behind. FLAC's guess scales with how many tracks are
+// about to be encoded, since its files run far bigger than a compressed
+// MP3/Ogg track; MP3/Ogg get one flat threshold instead, since their
+// files stay small enough that dropping below it means something's
+// already wrong regardless of how many tracks are queued up.
+const off_t kLowSpaceThresholdOggMp3 = 150LL * 1024 * 1024;
+const off_t kFlacBytesPerTrackGuess = 50LL * 1024 * 1024;
+
+// Walks up from path until it reaches a directory that actually exists -
+// the output folder (or several levels of it) may not have been created
+// yet, since EncodeThread() only creates the whole chain with
+// create_directory() right before encoding - then returns the volume
+// that existing ancestor lives on. Encoded output always lands somewhere
+// under that same tree, so its free space is the right thing to check.
+BVolume
+VolumeForOutputPath(BPath path)
+{
+	BEntry entry(path.Path());
+	while (!entry.Exists()) {
+		BPath parent;
+		if ((path.GetParent(&parent) != B_OK)
+				|| (strcmp(parent.Path(), path.Path()) == 0)) {
+			break;
+		}
+		path = parent;
+		entry.SetTo(path.Path());
+	}
+
+	entry_ref ref;
+	if (entry.GetRef(&ref) != B_OK) {
+		return BVolume();
+	}
+
+	return BVolume(ref.device);
+}
+
+} // namespace
+
+// Best-effort low-disk-space warning, checked only when the user presses
+// Encode (never during the encode run itself). Only actually pops up the
+// warning the first time it's checked, or if free space has dropped
+// further since the last time it was checked - so pressing Encode
+// repeatedly while still low, but not any lower, doesn't nag every time.
+void
+AppView::CheckDiskSpace()
+{
+	PRINT(("AppView::CheckDiskSpace()\n"));
+
+	int32 numRows = listView->CountRows();
+	if (numRows == 0) {
+		return;
+	}
+
+	int32 numSelected = 0;
+	for (int i = 0; i < numRows; i++) {
+		if (listView->RowAt(i)->IsSelected()) {
+			numSelected++;
+		}
+	}
+	int32 tracksToEncode = ((numSelected == 0) || (numSelected == numRows))
+		? numRows : numSelected;
+
+	// Any row about to be encoded works for figuring out the destination
+	// volume - they virtually always share one, and this is only meant
+	// as a heads-up, not a guarantee.
+	BRefRow* row = NULL;
+	for (int i = 0; i < numRows; i++) {
+		BRefRow* candidate = (BRefRow*)listView->RowAt(i);
+		if ((numSelected == 0) || (numSelected == numRows)
+				|| candidate->IsSelected()) {
+			row = candidate;
+			break;
+		}
+	}
+	if (!row) {
+		return;
+	}
+
+	BStringField* outputField = (BStringField*)row->GetField(SAVE_AS_COLUMN_INDEX);
+	if (!outputField || !outputField->String()) {
+		return;
+	}
+
+	BPath outputPath(outputField->String());
+	BPath outputParent;
+	if ((outputPath.InitCheck() != B_OK)
+			|| (outputPath.GetParent(&outputParent) != B_OK)) {
+		return;
+	}
+
+	BVolume volume = VolumeForOutputPath(outputParent);
+	if (volume.InitCheck() != B_OK) {
+		return;
+	}
+	off_t freeBytes = volume.FreeBytes();
+
+	AEEncoder* encoder = settings->Encoder();
+	BString encoderName(encoder ? encoder->GetName() : "");
+	encoderName.ToLower();
+	bool isFlac = (encoderName.FindFirst("flac") >= 0);
+
+	off_t neededBytes = isFlac
+		? ((off_t)tracksToEncode * kFlacBytesPerTrackGuess)
+		: kLowSpaceThresholdOggMp3;
+
+	bool lowOnSpace = (freeBytes < neededBytes);
+	bool firstCheck = (fLastCheckedFreeBytes < 0);
+	bool worseThanLastTime = (freeBytes < fLastCheckedFreeBytes);
+
+	if (lowOnSpace && (firstCheck || worseThanLastTime)) {
+		BString msg("Low disk space: only about ");
+		msg << (freeBytes / (1024 * 1024));
+		msg << " MB free on the destination volume, but this encode run "
+			"may need roughly ";
+		msg << (neededBytes / (1024 * 1024));
+		msg << " MB.\n\nYou can close this and continue if you like - "
+			"this is just a warning.";
+		AlertUser(msg.String());
+	}
+
+	fLastCheckedFreeBytes = freeBytes;
+}
 
 void
 AppView::Encode()
 {
 	PRINT(("AppView::Encode()\n"));
+
+	CheckDiskSpace();
 
 	thread_id thread = spawn_thread(AppView::EncodeThread, "_Encoder_",
 									B_NORMAL_PRIORITY, (void*)this);
@@ -956,11 +1289,38 @@ AppView::EncodeThread(void* args)
 		view->UnlockLooper();
 	}
 
+	// Captured once, up front, under the looper lock - the cover art (if
+	// any) found for whichever disc is currently loaded doesn't change
+	// mid-encode, so there's no need to keep re-locking to read it as each
+	// track finishes.
+	CoverArtBuffer coverArt;
+	BString mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId;
+	BObjectList<TrackMBMetadata, true> mbTrackMetadata(20);
+	if (view->LockLooper()) {
+		coverArt.SetTo(view->coverArtImageData, view->coverArtImageSize,
+			view->coverArtImageExt);
+		mbDiscId = view->mbDiscId;
+		mbReleaseId = view->mbReleaseId;
+		mbReleaseGroupId = view->mbReleaseGroupId;
+		mbArtistId = view->mbArtistId;
+		if (view->mbTrackMetadata) {
+			for (int32 i = 0; i < view->mbTrackMetadata->CountItems(); i++) {
+				TrackMBMetadata* src = view->mbTrackMetadata->ItemAt(i);
+				if (!src) {
+					continue;
+				}
+				TrackMBMetadata* copy = new TrackMBMetadata(*src);
+				mbTrackMetadata.AddItem(copy);
+			}
+		}
+		view->UnlockLooper();
+	}
+
 	BObjectList<BRefRow> objList;
 	BRefRow* row;
 	BBitmapField* tmpBitmapField;
 	BStringField* tmpStringField;
-	
+
 	int32 numRows = view->listView->CountRows();
 	int32 numSelected = 0;
 	for (int i = 0; i < numRows; i++) {
@@ -1029,6 +1389,8 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
+				view->cancelButton->SetEnabled(true);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1053,6 +1415,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
 				view->cancelButton->SetEnabled(true);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
@@ -1139,6 +1502,14 @@ AppView::EncodeThread(void* args)
 			return B_ERROR;
 		}
 
+		// Ripping the track to a local temp file first (when it's coming
+		// from a live audio CD) and encoding from that copy instead of
+		// reading straight off the disc. tempCopy's destructor cleans the
+		// temp file up at the end of this iteration regardless of which
+		// path out of the loop body below gets taken. This copy happens
+		// synchronously below, so post a status update first - otherwise
+		// the bar would just sit on the previous track's label for
+		// however long the rip takes, looking like a stall.
 		if (view->LockLooper()) {
 			BString ripping(RIPPING_LABEL);
 			ripping << path.Leaf();
@@ -1149,6 +1520,12 @@ AppView::EncodeThread(void* args)
 		}
 		TempCDCopy tempCopy(ref, path, &statusBarMessenger);
 		if (tempCopy.WasCanceled()) {
+			// Same cleanup as the FSS_CANCEL_ENCODING case below - the
+			// difference is this cancellation happened during the rip,
+			// before there was an encoder output file to speak of yet, but
+			// outputFile/outputParent are already known at this point in
+			// the loop either way, and TempCDCopy has already removed its
+			// own (partial) temp copy in its destructor/constructor.
 			PRINT(("User canceled during CD rip.\n"));
 			if (view->LockLooper()) {
 				BString remaining(STATUS_TRAILING_LABEL);
@@ -1348,6 +1725,23 @@ AppView::EncodeThread(void* args)
 			view->listView->InvalidateRow(row);
 			view->UnlockLooper();
 		}
+
+		// Cover art attaching is deliberately just "drop a cover file
+		// next to the encoded output" for now - embedding it into the
+		// encoded files' own tags/attributes is a later task.
+		if (coverArt.HasData()) {
+			view->WriteCoverArt(outputParent, coverArt.Data(), coverArt.Size(),
+				coverArt.Extension());
+		}
+
+		// The standard Audio:*/tag fields (artist/album/title/etc.) are
+		// already written by the encoder addon itself, as part of
+		// encoder->Encode() above - this only adds the MusicBrainz-
+		// specific IDs, which is a no-op when mbDiscId is empty (no
+		// MusicBrainz metadata for this disc).
+		view->WriteMusicBrainzMetadata(outputPath, track ? atol(track) : 0,
+			mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
+			&mbTrackMetadata);
 	}
 
 	encoder->UninitEncoder();
@@ -1370,7 +1764,6 @@ AppView::EncodeThread(void* args)
 	system_beep(SYSTEM_BEEP_ENCODING_DONE);
 	return B_OK;
 }
-
 
 void
 AppView::SaveLayout()
@@ -1425,7 +1818,6 @@ AppView::RestoreLayout()
 	}
 }
 
-
 void
 AppView::Cancel()
 {
@@ -1447,6 +1839,131 @@ AppView::AlertUser(const char* message)
 	BAlert* alert = new BAlert("alert", message, OK, NULL, NULL, B_WIDTH_AS_USUAL,
 							   B_WARNING_ALERT);
 	alert->Go();
+}
+
+void
+AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,
+	const BString& extension)
+{
+	PRINT(("AppView::WriteCoverArt(const BPath&, const void*, size_t, "
+		"const BString&)\n"));
+
+	if (!data || (size == 0)) {
+		return;
+	}
+
+	BString fileName("cover.");
+	fileName << extension;
+	BPath coverPath(directory.Path(), fileName.String());
+	if (coverPath.InitCheck() != B_OK) {
+		return;
+	}
+
+	// Every track of an album typically shares the same output directory,
+	// so this runs once per finished track but should only actually write
+	// the file the first time - and leaves it alone if the user (or an
+	// earlier encode) already has one there.
+	BEntry existing(coverPath.Path());
+	if (existing.Exists()) {
+		return;
+	}
+
+	BFile file(coverPath.Path(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
+	if (file.InitCheck() != B_OK) {
+		PRINT(("AppView::WriteCoverArt: couldn't create %s\n",
+			coverPath.Path()));
+		return;
+	}
+
+	file.Write(data, size);
+}
+
+void
+AppView::WriteMusicBrainzMetadata(const BPath& outputPath, int32 trackNumber,
+	const BString& discId, const BString& releaseId,
+	const BString& releaseGroupId, const BString& artistId,
+	const BObjectList<TrackMBMetadata, true>* trackMetadata)
+{
+	PRINT(("AppView::WriteMusicBrainzMetadata(const BPath&, int32, "
+		"const BString&, ...)\n"));
+
+	if (discId.Length() == 0) {
+		// No MusicBrainz metadata for the currently loaded disc - either
+		// the lookup found nothing, or it's gated off (see
+		// ENABLE_MUSICBRAINZ_LOOKUP in AppDefs.h).
+		return;
+	}
+
+	BString recordingId;
+	if (trackMetadata) {
+		for (int32 i = 0; i < trackMetadata->CountItems(); i++) {
+			TrackMBMetadata* track = trackMetadata->ItemAt(i);
+			if (track && (track->number == trackNumber)) {
+				recordingId = track->recordingId;
+				break;
+			}
+		}
+	}
+
+	// Haiku attributes, via the same AudioAttribute machinery
+	// AudioAttributes already uses for the standard Audio:* ones (see
+	// MusicBrainzAttributes.h) - self-registers each attribute's MIME
+	// attr-info so Tracker's Attributes menu shows them.
+	BFile file(outputPath.Path(), B_READ_WRITE);
+	if (file.InitCheck() == B_OK) {
+		MusicBrainzAttributes attributes(&file);
+		attributes.SetDiscId(discId.String());
+		attributes.SetReleaseId(releaseId.String());
+		attributes.SetReleaseGroupId(releaseGroupId.String());
+		attributes.SetArtistId(artistId.String());
+		attributes.SetRecordingId(recordingId.String());
+		if (attributes.Write() != B_OK) {
+			PRINT(("AppView::WriteMusicBrainzMetadata: writing "
+				"attributes failed for %s\n", outputPath.Path()));
+		}
+	} else {
+		PRINT(("AppView::WriteMusicBrainzMetadata: couldn't open %s for "
+			"attribute writing\n", outputPath.Path()));
+	}
+
+	// The same five values, embedded as tags. TagLib::File::properties()/
+	// setProperties() (the PropertyMap API) maps an arbitrary key like
+	// "MUSICBRAINZ_DISCID" to an ID3v2 TXXX frame for MP3, or to a
+	// same-named Vorbis comment field for OGG/FLAC - one code path for
+	// all three formats. These are the same tag names MusicBrainz Picard
+	// itself writes, so a file Hare tags here reads back the same way in
+	// Picard (which recognizes MUSICBRAINZ_TRACKID on import and treats
+	// the file as already matched) or any other MusicBrainz-aware tool.
+	TagLib::FileRef fileRef(outputPath.Path());
+	if (!fileRef.isNull() && fileRef.file()) {
+		TagLib::PropertyMap properties = fileRef.file()->properties();
+		properties.replace("MUSICBRAINZ_DISCID",
+			TagLib::StringList(discId.String()));
+		if (releaseId.Length() > 0) {
+			properties.replace("MUSICBRAINZ_ALBUMID",
+				TagLib::StringList(releaseId.String()));
+		}
+		if (releaseGroupId.Length() > 0) {
+			properties.replace("MUSICBRAINZ_RELEASEGROUPID",
+				TagLib::StringList(releaseGroupId.String()));
+		}
+		if (artistId.Length() > 0) {
+			properties.replace("MUSICBRAINZ_ARTISTID",
+				TagLib::StringList(artistId.String()));
+		}
+		if (recordingId.Length() > 0) {
+			properties.replace("MUSICBRAINZ_TRACKID",
+				TagLib::StringList(recordingId.String()));
+		}
+		fileRef.file()->setProperties(properties);
+		if (!fileRef.save()) {
+			PRINT(("AppView::WriteMusicBrainzMetadata: TagLib save "
+				"failed for %s\n", outputPath.Path()));
+		}
+	} else {
+		PRINT(("AppView::WriteMusicBrainzMetadata: TagLib couldn't open "
+			"%s\n", outputPath.Path()));
+	}
 }
 
 

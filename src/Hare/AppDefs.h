@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2021, Hare Team. All rights reserved.
+ * Copyright 2000-2026, Hare Team. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef __APP_DEFS_H__
@@ -19,5 +19,11 @@
 #define CDDA_MIME_TYPE "audio/x-cdda"
 
 #define SYSTEM_BEEP_ENCODING_DONE "Encoding Finished"
+
+// Sent as the "User-Agent"-style identifier on every MusicBrainz/Cover Art
+// Archive request MusicBrainzLookup makes - both services ask that it
+// identify the requesting application.
+#define MUSICBRAINZ_USER_AGENT "Hare-1.2 ( https://github.com/HaikuArchives/Hare )"
+#define ENABLE_MUSICBRAINZ_LOOKUP 1
 
 #endif

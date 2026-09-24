@@ -34,6 +34,7 @@
 #include "AppView.h"
 #include "CommandConstants.h"
 #include "GUIStrings.h"
+#include "MusicBrainzLookup.h"
 #include "Settings.h"
 
 AppWindow::AppWindow()
@@ -416,6 +417,16 @@ AppWindow::AddVolumeToList(dev_t device)
 			refMsg.AddRef("refs", &ref);
 		}
 		viewMessenger->SendMessage(&refMsg);
+#if ENABLE_MUSICBRAINZ_LOOKUP
+		fs_info info;
+		if ((fs_stat_dev(volume.Device(), &info) == B_OK)
+				&& (strcmp(info.fsh_name, "cdda") == 0)) {
+			char volumeName[B_FILE_NAME_LENGTH];
+			volume.GetName(volumeName);
+			MusicBrainzLookup::FetchAsync(info.device_name, volumeName,
+				viewMessenger);
+		}
+#endif
 	}
 }
 
