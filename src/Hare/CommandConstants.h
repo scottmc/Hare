@@ -34,6 +34,15 @@
 #define SAVE_LAYOUT_MSG '031'
 #define COVER_ART_FOUND '032'
 #define METADATA_FOUND '033'
+#define MUSICBRAINZ_LOOKUP_STARTED '034'
+#define MUSICBRAINZ_LOOKUP_FINISHED '035'
+#define CD_MOUNT_STATE_CHANGED '036'
+#define LOAD_CD_BUTTON_PRESSED '037'
+
+// Cap on how many MusicBrainz cover-art candidates get fetched and
+// offered to the user to choose between - see CoverArtCandidatesView
+// and MusicBrainzLookup::FetchThread()'s own comments.
+#define MAX_COVER_ART_CANDIDATES 10
 
 #define NUM_OF_COLUMNS 10
 #define COMPLETE_COLUMN_INDEX 0

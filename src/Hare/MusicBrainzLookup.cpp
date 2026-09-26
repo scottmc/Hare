@@ -51,6 +51,15 @@ struct FetchParams {
 	BMessenger replyTo;
 };
 
+// MAX_COVER_ART_CANDIDATES (CommandConstants.h) caps how many candidate
+// releases get their cover art fetched below and offered to the user to
+// choose between (see COVER_ART_FOUND below and CoverArtCandidatesView) -
+// almost always just one release, but the fallback title search below can
+// turn up several plausible matches with no good way to tell which is
+// right from metadata alone, and even an exact disc ID can legitimately
+// match more than one release (different regional pressings sharing the
+// same table of contents).
+
 // Decodes compressed image bytes (JPEG/PNG/whatever the Cover Art Archive
 // handed back) into a BBitmap via Haiku's Translation Kit. Returns NULL on
 // any failure. Caller owns the returned bitmap.
@@ -240,6 +249,32 @@ SendMetadata(const BString& discId, MusicBrainz5::CRelease* release,
 	replyTo.SendMessage(&msg);
 }
 
+// Sends MUSICBRAINZ_LOOKUP_FINISHED from its destructor, so
+// FetchThread() is guaranteed to signal completion - success or any
+// of its several failure returns alike - no matter which return
+// statement actually gets taken. AppView greys out Encode between the
+// matching LOOKUP_STARTED (sent by FetchAsync(), right before it
+// spawns the thread) and this, so an encode run can't start out from
+// under a still-in-flight lookup and silently miss the cover art/
+// metadata it hasn't received yet.
+class LookupFinishedNotifier {
+public:
+	LookupFinishedNotifier(BMessenger replyTo)
+		:
+		fReplyTo(replyTo)
+	{
+	}
+
+	~LookupFinishedNotifier()
+	{
+		BMessage msg(MUSICBRAINZ_LOOKUP_FINISHED);
+		fReplyTo.SendMessage(&msg);
+	}
+
+private:
+	BMessenger fReplyTo;
+};
+
 } // namespace
 
 void
@@ -261,10 +296,19 @@ MusicBrainzLookup::FetchAsync(const char* deviceName, const char* fallbackQuery,
 	params->fallbackQuery = fallbackQuery ? fallbackQuery : "";
  	params->replyTo = *replyTo;
 
+	// Signalled here, right before the lookup actually starts, so AppView
+	// can grey out Encode for its duration - matched by
+	// LookupFinishedNotifier inside FetchThread (success or failure
+	// alike), or right below if the thread never even gets spawned.
+	BMessage startedMsg(MUSICBRAINZ_LOOKUP_STARTED);
+	replyTo->SendMessage(&startedMsg);
+
 	thread_id thread = spawn_thread(MusicBrainzLookup::FetchThread,
 		"_MusicBrainzLookup_", B_LOW_PRIORITY, (void*)params);
 	if (thread < B_OK) {
 		delete params;
+		BMessage finishedMsg(MUSICBRAINZ_LOOKUP_FINISHED);
+		replyTo->SendMessage(&finishedMsg);
 		return;
 	}
 	resume_thread(thread);
@@ -309,6 +353,8 @@ MusicBrainzLookup::FetchThread(void* args)
  	BMessenger replyTo = params->replyTo;
 	delete params;
 
+	LookupFinishedNotifier lookupFinished(replyTo);
+
 	BString discId = ComputeDiscID(deviceName.String());
 	if (discId.Length() == 0) {
 		PRINT(("MusicBrainzLookup: could not compute a disc ID for %s\n",
@@ -319,13 +365,13 @@ MusicBrainzLookup::FetchThread(void* args)
 	PRINT(("MusicBrainzLookup: disc ID = %s\n", discId.String()));
 
 	MusicBrainz5::CQuery query(MUSICBRAINZ_USER_AGENT);
-	MusicBrainz5::CRelease* release = NULL;
+	MusicBrainz5::CReleaseList candidateReleases;
 
 	try {
 		MusicBrainz5::CReleaseList releases = query.LookupDiscID(discId.String());
 
 		if (releases.NumItems() > 0) {
-			release = releases.Item(0);
+			candidateReleases = releases;
 		} else {
 			PRINT(("MusicBrainzLookup: no releases found for disc ID %s\n",
 				discId.String()));
@@ -335,8 +381,11 @@ MusicBrainzLookup::FetchThread(void* args)
 		PRINT(("MusicBrainzLookup: disc ID lookup failed: %s\n", ex.what()));
 	}
 
+	// Kept alive for the rest of the function, same as candidateReleases
+	// itself below - both may end up holding pointers into this that need
+	// to outlive the try block they're captured in.
 	MusicBrainz5::CMetadata searchMetadata;
-	if (!release) {
+	if (candidateReleases.NumItems() == 0) {
 		BString fallbackArtist, fallbackAlbum;
 		ParseArtistAlbum(fallbackQuery, fallbackArtist, fallbackAlbum);
 
@@ -355,7 +404,7 @@ MusicBrainzLookup::FetchThread(void* args)
 				MusicBrainz5::CReleaseList* searchReleases
 					= searchMetadata.ReleaseList();
 				if (searchReleases && (searchReleases->NumItems() > 0)) {
-					release = searchReleases->Item(0);
+					candidateReleases = *searchReleases;
 				} else {
 					PRINT(("MusicBrainzLookup: title search found no "
 						"releases\n"));
@@ -367,37 +416,70 @@ MusicBrainzLookup::FetchThread(void* args)
 		}
 	}
 
-	if (!release) {
+	if (candidateReleases.NumItems() == 0) {
 		return B_ERROR;
 	}
 
+	// Track/release metadata (title, artist, per-track recording IDs, ...)
+	// always comes from the single best candidate, same as before this
+	// changed to support multiple cover art candidates - only the cover
+	// art itself is offered as a choice.
+	MusicBrainz5::CRelease* release = candidateReleases.Item(0);
 	BString releaseId = release->ID().c_str();
 	SendMetadata(discId, release, replyTo);
 
 	PRINT(("MusicBrainzLookup: release ID = %s\n", releaseId.String()));
 
-	std::vector<unsigned char> imageData;
-	try {
-		CoverArtArchive::CCoverArt coverArt(MUSICBRAINZ_USER_AGENT);
-		imageData = coverArt.FetchFront(releaseId.String());
-	} catch (std::exception& ex) {
-		PRINT(("MusicBrainzLookup: cover art fetch failed: %s\n", ex.what()));
-		return B_ERROR;
+	// One cover art fetch per candidate release, up to
+	// MAX_COVER_ART_CANDIDATES - each is independent, so one candidate's
+	// cover art being missing or failing to fetch doesn't stop the others
+	// from being offered. "bitmap" and "imageData" are added to msg as
+	// parallel indexed arrays (Haiku's usual BMessage idiom for this - see
+	// METADATA_FOUND's per-track fields for another example), so a
+	// candidate with no decodable bitmap still adds an explicit NULL
+	// "bitmap" entry to keep the two arrays in step with each other.
+	int32 candidateCount = candidateReleases.NumItems();
+	if (candidateCount > MAX_COVER_ART_CANDIDATES) {
+		candidateCount = MAX_COVER_ART_CANDIDATES;
 	}
-
-	if (imageData.empty()) {
-		PRINT(("MusicBrainzLookup: no cover art available for release %s\n",
-			releaseId.String()));
-		return B_ERROR;
-	}
-
-	BBitmap* bitmap = DecodeImage(&imageData[0], imageData.size());
 
 	BMessage msg(COVER_ART_FOUND);
-	if (bitmap) {
+	int32 foundCount = 0;
+	for (int32 i = 0; i < candidateCount; i++) {
+		MusicBrainz5::CRelease* candidate = candidateReleases.Item(i);
+		if (!candidate) {
+			continue;
+		}
+		BString candidateId = candidate->ID().c_str();
+
+		std::vector<unsigned char> imageData;
+		try {
+			CoverArtArchive::CCoverArt coverArt(MUSICBRAINZ_USER_AGENT);
+			imageData = coverArt.FetchFront(candidateId.String());
+		} catch (std::exception& ex) {
+			PRINT(("MusicBrainzLookup: cover art fetch failed for %s: "
+				"%s\n", candidateId.String(), ex.what()));
+			continue;
+		}
+
+		if (imageData.empty()) {
+			PRINT(("MusicBrainzLookup: no cover art available for "
+				"release %s\n", candidateId.String()));
+			continue;
+		}
+
+		BBitmap* bitmap = DecodeImage(&imageData[0], imageData.size());
 		msg.AddPointer("bitmap", bitmap);
+		msg.AddData("imageData", B_RAW_TYPE, &imageData[0], imageData.size());
+		foundCount++;
 	}
-	msg.AddData("imageData", B_RAW_TYPE, &imageData[0], imageData.size());
+
+	if (foundCount == 0) {
+		PRINT(("MusicBrainzLookup: no cover art available for any "
+			"candidate release\n"));
+		return B_ERROR;
+	}
+
 	replyTo.SendMessage(&msg);
 
 	return B_OK;

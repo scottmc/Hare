@@ -37,6 +37,51 @@
 #include "MusicBrainzLookup.h"
 #include "Settings.h"
 
+namespace {
+
+// __get_haiku_revision() is a private libroot call (see
+// headers/private/libroot/system_revision.h in the Haiku source - also
+// what AboutSystem itself calls to show "Version: hrevNNNNN" in its About
+// box) that returns a string such as "hrev60141" or "hrev60141+3
+// [branchname]" for an unofficial/local build, or "0" for a from-source
+// build with no hrev tags reachable at all. It's declared directly here
+// instead of pulling in that private header, since the function itself is
+// a stable, long-standing part of libroot that every app already links
+// against.
+extern "C" const char* __get_haiku_revision(void);
+
+// The Haiku revision that first shipped the SCSI CD driver fixes for
+// B_SCSI_GET_TOC/READ_CD. Loading a CD on an older Haiku can KDL the
+// whole system, so AppWindow::CheckHaikuRevision() below refuses to let
+// the user get far enough to hit that rather than letting them find out
+// the hard way.
+const int32 kMinSafeHaikuRevision = 60141;
+
+// Parses the leading "hrevNNNNN" out of a Haiku revision string like the
+// ones __get_haiku_revision() returns. Returns false (and leaves
+// *revision untouched) if the string doesn't start with "hrev" followed
+// by at least one digit - e.g. a from-source build without any hrev tags
+// reachable, which returns "0". Unparseable is treated as "unknown", not
+// "unsafe", so an odd build never gets wrongly locked out of CD support.
+bool
+ParseHaikuRevision(const char* revisionString, int32* revision)
+{
+	if (!revisionString || (strncmp(revisionString, "hrev", 4) != 0)) {
+		return false;
+	}
+
+	char* end = NULL;
+	long parsed = strtol(revisionString + 4, &end, 10);
+	if (end == (revisionString + 4)) {
+		return false;
+	}
+
+	*revision = (int32)parsed;
+	return true;
+}
+
+} // namespace
+
 AppWindow::AppWindow()
 	: 
 	BWindow(BRect(0,0,0,0) , APPLICATION, B_TITLED_WINDOW,
@@ -71,6 +116,20 @@ AppWindow::InitWindow()
 	PRINT(("AppWindow::InitWindow()\n"));
 
 	encoderAddon = 0;
+
+	CheckHaikuRevision();
+
+	// appView/viewMessenger aren't created until further down this same
+	// function (InitMenus(), called below, runs before that point) - and
+	// as plain uninitialized pointer members they start out holding
+	// whatever garbage was already on the heap, not NULL. LoadCDMenu()
+	// (called from InitMenus()) checks viewMessenger before using it,
+	// but that check only works if a not-yet-created messenger actually
+	// reads as NULL, which is what crashed on startup before this line
+	// was added - the garbage pointer read as "valid" and was then
+	// dereferenced.
+	appView = NULL;
+	viewMessenger = NULL;
 
 	SetTitle(APPLICATION);
 	SetWorkspaces(B_CURRENT_WORKSPACE);
@@ -110,6 +169,14 @@ AppWindow::InitWindow()
 
 	viewMessenger = new BMessenger(appView);
 
+	// LoadCDMenu() was already called once from InitMenus() above, before
+	// appView (and viewMessenger) existed, so its CD_MOUNT_STATE_CHANGED
+	// send was skipped (see the viewMessenger check there). Call it again
+	// now so CoverArtView finds out about a CD that's already mounted at
+	// launch, instead of only ever hearing about mounts/unmounts from
+	// here on.
+	LoadCDMenu();
+
 	BMessage* viewShortcut = 0;
 	viewShortcut = new BMessage(VIEW_SHORTCUT);
 	viewShortcut->AddInt32("view", 0);
@@ -132,6 +199,40 @@ AppWindow::MenuBar()
 	PRINT(("AppWindow::MenuBar()\n"));
 
 	return menuBar;
+}
+
+// Best-effort startup guard: if the running Haiku predates
+// kMinSafeHaikuRevision, CD support is disabled outright (see
+// LoadCDMenu() and AddVolumeToList() below) rather than letting the user
+// select a CD and hit the SCSI driver bug that can KDL the system. A
+// revision string we can't confidently parse (see ParseHaikuRevision())
+// is treated as safe, not unsafe, so an unusual build never gets wrongly
+// locked out.
+void
+AppWindow::CheckHaikuRevision()
+{
+	PRINT(("AppWindow::CheckHaikuRevision()\n"));
+
+	fCdOperationsAllowed = true;
+
+	int32 revision;
+	if (ParseHaikuRevision(__get_haiku_revision(), &revision)
+			&& (revision < kMinSafeHaikuRevision)) {
+		fCdOperationsAllowed = false;
+
+		BString msg("This copy of Haiku (");
+		msg << __get_haiku_revision();
+		msg << ") predates the SCSI CD driver fixes in hrev";
+		msg << kMinSafeHaikuRevision;
+		msg << ". Loading a CD on an older Haiku can crash the whole "
+			"system, so CD support has been disabled in ";
+		msg << APPLICATION;
+		msg << " until you update.\n\nYou can still encode existing "
+			"audio files.";
+		BAlert* alert = new BAlert(APPLICATION, msg.String(), "OK", NULL,
+			NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+		alert->Go();
+	}
 }
 
 void
@@ -188,9 +289,16 @@ AppWindow::LoadCDMenu()
 		delete item;
 	}
 
+	if (!fCdOperationsAllowed) {
+		loadCdMenu->AddItem(new BMenuItem(
+			"CD support disabled (Haiku too old)", NULL));
+		return;
+	}
+
 	BVolume volume;
 	volumes->Rewind();
 	char shortcut = '1';
+	bool anyCdMounted = false;
 	while (volumes->GetNextVolume(&volume) == B_NO_ERROR) {
 		fs_info info;
 		fs_stat_dev(volume.Device(), &info);
@@ -200,12 +308,45 @@ AppWindow::LoadCDMenu()
 			loadCdMenu->AddItem(new BMenuItem(info.volume_name, menuMessage,
 											  shortcut, B_COMMAND_KEY));
 			shortcut++;
+			anyCdMounted = true;
 		}
 	}
 
 	numItems = loadCdMenu->CountItems();
 	if (numItems == 0) {
 		loadCdMenu->AddItem(new BMenuItem(NO_CD_MOUNTED, NULL));
+	}
+
+	// Lets CoverArtView show or hide its own "Load CD" button (see
+	// CoverArtView::SetCdMounted()) without it having to duplicate this
+	// same cdda volume scan itself. Sent every time this menu is
+	// rebuilt, which already happens both at startup and on every
+	// mount/unmount, so the button's state stays in sync for free.
+	// InitMenus() (and so this very first call) runs before InitWindow()
+	// has created appView/viewMessenger, so guard against that - the
+	// InitWindow() call right after viewMessenger is set up re-calls
+	// LoadCDMenu() to cover the startup case instead.
+	if (viewMessenger) {
+		BMessage cdMountMsg(CD_MOUNT_STATE_CHANGED);
+		cdMountMsg.AddBool("mounted", anyCdMounted);
+		viewMessenger->SendMessage(&cdMountMsg);
+	}
+}
+
+void
+AppWindow::LoadFirstMountedCd()
+{
+	PRINT(("AppWindow::LoadFirstMountedCd()\n"));
+
+	BVolume volume;
+	volumes->Rewind();
+	while (volumes->GetNextVolume(&volume) == B_NO_ERROR) {
+		fs_info info;
+		fs_stat_dev(volume.Device(), &info);
+		if (strcmp(info.fsh_name, "cdda") == 0) {
+			AddVolumeToList(volume.Device());
+			break;
+		}
 	}
 }
 
@@ -388,6 +529,10 @@ AppWindow::AddVolumeToList(const char* name)
 {
 	PRINT(("AppWindow::AddVolumeToList(const char*)\n"));
 
+	if (!fCdOperationsAllowed) {
+		return;
+	}
+
 	volumes->Rewind();
 	BVolume volume;
 	while (volumes->GetNextVolume(&volume) == B_OK) {
@@ -404,6 +549,10 @@ void
 AppWindow::AddVolumeToList(dev_t device)
 {
 	PRINT(("AppWindow::AddVolumeToList(dev_t)\n"));
+
+	if (!fCdOperationsAllowed) {
+		return;
+	}
 
 	BVolume volume(device);
 	BDirectory dir;
@@ -546,6 +695,9 @@ AppWindow::MessageReceived(BMessage* message)
 			break;
 		case B_REFS_RECEIVED:
 			RefsReceived(message);
+			break;
+		case LOAD_CD_BUTTON_PRESSED:
+			LoadFirstMountedCd();
 			break;
 		default:
 			BWindow::MessageReceived(message);

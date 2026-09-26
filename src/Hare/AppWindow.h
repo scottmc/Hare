@@ -30,9 +30,11 @@ private:
 	void InitMenus();
 	void LoadCDMenu();
 	void LoadEncoderMenu();
+	void CheckHaikuRevision();
 	void MenuItemSelected(BMessage* message);
 	void AddVolumeToList(const char* name);
 	void AddVolumeToList(dev_t device);
+	void LoadFirstMountedCd();
 	AppView* appView;
 	BMenuBar* menuBar;
 	BMenu* loadCdMenu;
@@ -41,6 +43,12 @@ private:
 	BMessenger* viewMessenger;
 	BVolumeRoster* volumes;
 	image_id encoderAddon;
+	// Set by CheckHaikuRevision() at startup - false when the running
+	// Haiku predates the SCSI CD driver fixes needed to load a CD
+	// safely (see CheckHaikuRevision()'s own comment in AppWindow.cpp).
+	// LoadCDMenu() and AddVolumeToList() both honor this so the user
+	// can't get far enough to hit the KDL it guards against.
+	bool fCdOperationsAllowed;
 };
 
 #endif

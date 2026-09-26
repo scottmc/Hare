@@ -8,6 +8,7 @@
 #include <Beep.h>
 #include <Bitmap.h>
 #include <Button.h>
+#include <CardLayout.h>
 #include <Debug.h>
 #include <Font.h>
 #include <Directory.h>
@@ -45,6 +46,7 @@
 #include <tag.h>
 #include <tpropertymap.h>
 #include <tstringlist.h>
+#include <tvariant.h>
 
 #include "AEEncoder.h"
 #include "AudioAttributes.h"
@@ -55,6 +57,7 @@
 #include "AppWindow.h"
 #include "CommandConstants.h"
 #include "CheckMark.h"
+#include "CoverArtCandidatesView.h"
 #include "CoverArtView.h"
 #include "EditorView.h"
 #include "EncoderListView.h"
@@ -89,9 +92,9 @@
 AppView::AppView()
 	:
 	BView("AppView", B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE_JUMP),
-	coverArtImageData(NULL),
-	coverArtImageSize(0),
+	coverArtCandidates(NULL),
 	fLastCheckedFreeBytes(-1),
+	fMusicBrainzLookupsPending(0),
 	mbTrackMetadata(NULL)
 {
 	PRINT(("AppView::AppView(BRect)\n"));
@@ -104,7 +107,7 @@ AppView::~AppView()
 
 	stop_watching(this);
 
-	delete[] (unsigned char*)coverArtImageData;
+	delete coverArtCandidates;
 	delete mbTrackMetadata;
 }
 
@@ -129,6 +132,7 @@ AppView::InitView()
 	editorBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 	coverArtView = new CoverArtView();
+	coverArtCandidatesView = new CoverArtCandidatesView();
 
 	coverArtBoxView = new BBox("coverArtBoxView");
 	coverArtBoxView->SetExplicitMinSize(BSize(100, 125));
@@ -155,11 +159,28 @@ AppView::InitView()
 		.Add(editorScrollView, 0.0f)
 	.End();
 
-	BLayoutBuilder::Group<>(coverArtBoxView, B_HORIZONTAL)
+	// coverArtBoxView shows one of two "cards": the single big preview
+	// (coverArtView, the common case - one cover art candidate or none)
+	// or a horizontally scrollable strip of candidate thumbnails
+	// (coverArtCandidatesView, wrapped in its own BScrollView) when
+	// MusicBrainzLookup found more than one plausible release and its
+	// cover art for each. MessageReceived()'s COVER_ART_FOUND case picks
+	// which one is visible each time new cover art candidates come in.
+	BView* coverArtCard = new BView("coverArtCard", 0);
+	BLayoutBuilder::Group<>(coverArtCard, B_HORIZONTAL)
 		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
 					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
 		.Add(coverArtView, 0.0f)
 	.End();
+
+	BScrollView* coverArtCandidatesScrollView = new BScrollView(
+		"coverArtCandidatesScrollView", coverArtCandidatesView,
+		B_WILL_DRAW | B_FRAME_EVENTS, true, false, B_NO_BORDER);
+
+	coverArtBoxView->SetLayout(new BCardLayout());
+	coverArtBoxView->AddChild(coverArtCard);
+	coverArtBoxView->AddChild(coverArtCandidatesScrollView);
+	((BCardLayout*)coverArtBoxView->GetLayout())->SetVisibleItem((int32)0);
 
 	// Details editor and cover art side by side, with a vertical splitter
 	// between them, sitting above the horizontal splitter that separates
@@ -237,42 +258,90 @@ AppView::MessageReceived(BMessage* message)
 				SaveLayout();
 			}
 			break;
+		case CD_MOUNT_STATE_CHANGED: {
+				// Sent by AppWindow (see AppWindow::LoadCDMenu()) every
+				// time it rebuilds the Load CD menu - both at startup and
+				// on every mount/unmount - so CoverArtView's own "Load
+				// CD" button (drawn over its placeholder gradient) stays
+				// in sync with whether there's actually a CD to load.
+				bool mounted = false;
+				message->FindBool("mounted", &mounted);
+				coverArtView->SetCdMounted(mounted);
+			}
+			break;
 		case COVER_ART_FOUND: {
 				// Sent by MusicBrainzLookup (on its own thread) once it's
 				// found - or failed to find - cover art for the disc most
-				// recently loaded. Display it right away; the original
-				// compressed bytes are kept around so EncodeThread() can
-				// write them out alongside the encoded files later.
-				BBitmap* bitmap = NULL;
-				message->FindPointer("bitmap", (void**)&bitmap);
-				if (bitmap) {
-					coverArtView->SetCoverArt(bitmap);
-				}
+				// recently loaded, as parallel indexed "bitmap"/"imageData"
+				// arrays - one candidate release's cover art per pair, in
+				// the order MusicBrainzLookup checked them, almost always
+				// just one. Each candidate's original compressed bytes are
+				// kept in coverArtCandidates (see AppView.h) so
+				// EncodeThread() can write out whichever one ends up
+				// selected once Encode() is pressed.
+				ClearCoverArtCandidates();
+				coverArtCandidates
+					= new BObjectList<CoverArtCandidate, true>(
+						MAX_COVER_ART_CANDIDATES);
 
+				BBitmap* bitmaps[MAX_COVER_ART_CANDIDATES];
+				int32 bitmapCount = 0;
+
+				int32 index = 0;
 				const void* data;
 				ssize_t size;
-				if (message->FindData("imageData", B_RAW_TYPE, &data, &size)
-						== B_OK) {
-					delete[] (unsigned char*)coverArtImageData;
-					coverArtImageData = new unsigned char[size];
-					memcpy(coverArtImageData, data, size);
-					coverArtImageSize = (size_t)size;
+				while ((bitmapCount < MAX_COVER_ART_CANDIDATES)
+						&& (message->FindData("imageData", B_RAW_TYPE, index,
+							&data, &size) == B_OK)) {
+					BBitmap* bitmap = NULL;
+					message->FindPointer("bitmap", index, (void**)&bitmap);
+
+					CoverArtCandidate* candidate = new CoverArtCandidate();
+					candidate->data = new unsigned char[size];
+					memcpy(candidate->data, data, size);
+					candidate->size = (size_t)size;
 
 					const unsigned char* bytes = (const unsigned char*)data;
 					if ((size >= 8) && (bytes[0] == 0x89) && (bytes[1] == 'P')
 							&& (bytes[2] == 'N') && (bytes[3] == 'G')) {
-						coverArtImageExt = "png";
+						candidate->extension = "png";
 					} else if ((size >= 3) && (bytes[0] == 0xFF)
 							&& (bytes[1] == 0xD8) && (bytes[2] == 0xFF)) {
-						coverArtImageExt = "jpg";
+						candidate->extension = "jpg";
 					} else if ((size >= 4) && (bytes[0] == 'G')
 							&& (bytes[1] == 'I') && (bytes[2] == 'F')) {
-						coverArtImageExt = "gif";
+						candidate->extension = "gif";
 					} else {
 						// The Cover Art Archive serves mostly JPEG/PNG - a
 						// reasonable default for anything else unrecognized.
-						coverArtImageExt = "jpg";
+						candidate->extension = "jpg";
 					}
+
+					coverArtCandidates->AddItem(candidate);
+					bitmaps[bitmapCount] = bitmap;
+					bitmapCount++;
+					index++;
+				}
+
+				// One candidate (by far the common case): show it full
+				// size in coverArtView, same as before this supported more
+				// than one. More than one: hand every bitmap to
+				// coverArtCandidatesView instead and switch coverArtBoxView
+				// to that card - see InitView()'s own comment on the two
+				// cards. Either way the selection (coverArtCandidatesView
+				// defaults to index 0) is what EncodeThread() reads at
+				// Encode() time, not whatever was selected when this
+				// message arrived.
+				BCardLayout* cardLayout
+					= (BCardLayout*)coverArtBoxView->GetLayout();
+				if (bitmapCount > 1) {
+					coverArtCandidatesView->SetCandidates(bitmaps,
+						bitmapCount);
+					cardLayout->SetVisibleItem((int32)1);
+				} else {
+					coverArtView->SetCoverArt(
+						(bitmapCount == 1) ? bitmaps[0] : NULL);
+					cardLayout->SetVisibleItem((int32)0);
 				}
 			}
 			break;
@@ -315,6 +384,26 @@ AppView::MessageReceived(BMessage* message)
 					track->artist = trackArtist;
 					track->recordingId = recordingId;
 					mbTrackMetadata->AddItem(track);
+				}
+			}
+			break;
+		case MUSICBRAINZ_LOOKUP_STARTED: {
+				// See fMusicBrainzLookupsPending's comment in AppView.h -
+				// Encode stays disabled for as long as any lookup this CD
+				// load started is still in flight, so an encode run can't
+				// grab its cover art/metadata snapshot before that lookup
+				// has actually delivered them.
+				fMusicBrainzLookupsPending++;
+				encodeButton->SetEnabled(false);
+			}
+			break;
+		case MUSICBRAINZ_LOOKUP_FINISHED: {
+				if (fMusicBrainzLookupsPending > 0) {
+					fMusicBrainzLookupsPending--;
+				}
+				if ((fMusicBrainzLookupsPending == 0)
+						&& !settings->IsEncoding()) {
+					encodeButton->SetEnabled(true);
 				}
 			}
 			break;
@@ -666,6 +755,20 @@ AppView::SetSaveAsColumn(BRefRow* row)
 		fileNamePattern.ReplaceAll("%c", comment);
 		fileNamePattern.ReplaceAll("%k", track);
 		fileNamePattern.ReplaceAll("%g", genre);
+
+		// A blank tag (most often the per-track artist, which plenty of
+		// CDs never set) substituted into a "%a/%n/..." pattern leaves
+		// behind a doubled path separator, e.g.
+		// ".../MP3//Some Album/...". BPath's InitCheck() treats that as
+		// a syntactically invalid path (an empty path component) and
+		// refuses it outright, which is why Encode() was failing with
+		// "outputPath failed InitCheck()" for this track even though
+		// nothing looked obviously wrong about it. Collapse any run of
+		// slashes left over from an empty substitution down to one.
+		while (fileNamePattern.FindFirst("//") >= 0) {
+			fileNamePattern.ReplaceAll("//", "/");
+		}
+
 		row->SetField(new BStringField(fileNamePattern.String()), SAVE_AS_COLUMN_INDEX);
 	}
 }
@@ -897,6 +1000,197 @@ AppView::UpdateItem(BMessage* message)
 
 namespace {
 
+// Longest a single CD read is allowed to block before TempCDCopy::Copy()
+// (below) gives up on it, rather than letting a drive that's stopped
+// answering - ejected or physically disconnected mid-rip, most commonly -
+// hang Hare (and its "_Encoder_" thread) forever. #define rather than a
+// const so it's a single obvious place to retune if 10 seconds turns out
+// to be too eager or too generous in practice.
+#define CD_READ_TIMEOUT_SECONDS 10
+const bigtime_t kCdReadTimeout = CD_READ_TIMEOUT_SECONDS * 1000000LL;
+
+// Sentinel ssize_t/status_t TimedRead() (below) returns when a read
+// didn't finish within kCdReadTimeout. The 0x80000000 forces this
+// negative regardless of how the compiler packs the 'CdTO' multi-char
+// literal, so it can't be mistaken for a (positive) byte count by the
+// usual "> 0 means N bytes read" checks, and can't collide with a real
+// BeOS/POSIX status_t error or with FSS_CANCEL_ENCODING and friends from
+// the encoder addon SDK.
+const status_t kCdReadTimedOut = (status_t)(0x80000000u | 'CdTO');
+
+struct TimedReadArgs {
+	BFile* file;
+	void* buffer;
+	size_t size;
+	ssize_t result;
+	sem_id done;
+};
+
+int32
+TimedReadThread(void* cookie)
+{
+	TimedReadArgs* args = (TimedReadArgs*)cookie;
+	args->result = args->file->Read(args->buffer, args->size);
+	release_sem(args->done);
+	return B_OK;
+}
+
+// Wraps a single BFile::Read() with a hard wall-clock timeout, since
+// BFile has no notion of one on its own. The read itself runs on a
+// short-lived helper thread; if it hasn't finished within timeoutMicros,
+// this gives up on it and returns kCdReadTimedOut instead of waiting any
+// longer.
+//
+// A thread blocked that deep in a kernel I/O call can't be safely
+// canceled, so on a timeout it's killed outright rather than left to run
+// forever - but its result struct and the caller's buffer are
+// deliberately leaked in that case rather than freed, since the killed
+// thread's very last instructions could still be touching them; freeing
+// either out from under it would trade a hang for a use-after-free. This
+// is a one-time cost paid only on the rare timeout path, not on every
+// read.
+ssize_t
+TimedRead(BFile& file, void* buffer, size_t size, bigtime_t timeoutMicros)
+{
+	TimedReadArgs* args = new TimedReadArgs();
+	args->file = &file;
+	args->buffer = buffer;
+	args->size = size;
+	args->result = 0;
+	args->done = create_sem(0, "cd_read_done");
+	if (args->done < B_OK) {
+		// Couldn't even set up the timeout machinery - fall back to a
+		// plain, untimed read rather than failing the whole rip over it.
+		ssize_t result = file.Read(buffer, size);
+		delete args;
+		return result;
+	}
+
+	thread_id reader = spawn_thread(TimedReadThread, "_CdRead_",
+		B_LOW_PRIORITY, args);
+	if (reader < B_OK) {
+		delete_sem(args->done);
+		ssize_t result = file.Read(buffer, size);
+		delete args;
+		return result;
+	}
+	resume_thread(reader);
+
+	status_t waitStatus = acquire_sem_etc(args->done, 1, B_RELATIVE_TIMEOUT,
+		timeoutMicros);
+	if (waitStatus != B_OK) {
+		kill_thread(reader);
+		return kCdReadTimedOut;
+	}
+
+	wait_for_thread(reader, NULL);
+	ssize_t result = args->result;
+	delete_sem(args->done);
+	delete args;
+	return result;
+}
+
+struct TimedOpenArgs {
+	BFile* file;
+	const char* path;
+	uint32 openMode;
+	status_t result;
+	off_t size;
+	bool haveSize;
+	sem_id done;
+};
+
+int32
+TimedOpenThread(void* cookie)
+{
+	TimedOpenArgs* args = (TimedOpenArgs*)cookie;
+	args->file = new BFile(args->path, args->openMode);
+	args->result = args->file->InitCheck();
+	if (args->result == B_OK) {
+		args->haveSize = (args->file->GetSize(&args->size) == B_OK);
+	}
+	release_sem(args->done);
+	return B_OK;
+}
+
+// Wraps opening a BFile - and, on success, reading back its size - with the
+// same hard wall-clock timeout TimedRead() gives an individual read.
+// Without this, a drive that's stopped answering could hang the BFile
+// constructor itself (a blocking kernel open call) indefinitely, freezing
+// the "_Encoder_" thread - and Cancel/Abort along with it - before
+// TimedRead() ever got a chance to enforce its own timeout on the first
+// read. That's exactly what let a bad drive lock Hare up hard enough to
+// need physically unplugging it: Copy() (below) used to open its source
+// BFile directly, with nothing guarding that first call.
+//
+// On success, ownership of the newly-opened *outFile passes to the caller.
+// On any failure - including timeout - *outFile is left NULL. On a
+// timeout, the helper thread's own BFile is deliberately leaked rather
+// than freed, for the same reason TimedRead() leaks its buffer: the killed
+// thread's last instructions could still be touching it.
+status_t
+TimedOpen(const char* path, uint32 openMode, BFile** outFile,
+	off_t* outSize, bigtime_t timeoutMicros)
+{
+	*outFile = NULL;
+	if (outSize) {
+		*outSize = 0;
+	}
+
+	TimedOpenArgs* args = new TimedOpenArgs();
+	args->file = NULL;
+	args->path = path;
+	args->openMode = openMode;
+	args->result = B_ERROR;
+	args->size = 0;
+	args->haveSize = false;
+	args->done = create_sem(0, "cd_open_done");
+	if (args->done < B_OK) {
+		// Couldn't even set up the timeout machinery - fall back to a
+		// plain, untimed open rather than failing the whole rip over it.
+		BFile* file = new BFile(path, openMode);
+		status_t result = file->InitCheck();
+		if ((result == B_OK) && outSize && (file->GetSize(outSize) != B_OK)) {
+			*outSize = 0;
+		}
+		*outFile = file;
+		delete args;
+		return result;
+	}
+
+	thread_id opener = spawn_thread(TimedOpenThread, "_CdOpen_",
+		B_LOW_PRIORITY, args);
+	if (opener < B_OK) {
+		delete_sem(args->done);
+		BFile* file = new BFile(path, openMode);
+		status_t result = file->InitCheck();
+		if ((result == B_OK) && outSize && (file->GetSize(outSize) != B_OK)) {
+			*outSize = 0;
+		}
+		*outFile = file;
+		delete args;
+		return result;
+	}
+	resume_thread(opener);
+
+	status_t waitStatus = acquire_sem_etc(args->done, 1, B_RELATIVE_TIMEOUT,
+		timeoutMicros);
+	if (waitStatus != B_OK) {
+		kill_thread(opener);
+		return kCdReadTimedOut;
+	}
+
+	wait_for_thread(opener, NULL);
+	status_t result = args->result;
+	if ((result == B_OK) && outSize && args->haveSize) {
+		*outSize = args->size;
+	}
+	*outFile = args->file;
+	delete_sem(args->done);
+	delete args;
+	return result;
+}
+
 // Encoders read their input file sequentially, one buffer at a time, which
 // is fine on a local disk but slow when the ref points at a track on a
 // live "cdda" (audio CD) volume: every read there is real optical-drive
@@ -923,7 +1217,8 @@ public:
 		:
 		fPath(originalPath),
 		fIsTemp(false),
-		fCanceled(false)
+		fCanceled(false),
+		fTimedOut(false)
 	{
 		BVolume volume(ref->device);
 		fs_info info;
@@ -961,11 +1256,22 @@ public:
 			if (copyStatus == FSS_CANCEL_ENCODING) {
 				PRINT(("TempCDCopy: copy canceled\n"));
 				fCanceled = true;
+			} else if (copyStatus == kCdReadTimedOut) {
+				// A hung/disconnected drive: don't fall through to
+				// encoding directly from the same CD reference below,
+				// since that read would almost certainly time out too -
+				// just later, and more confusingly. Report it as a hard
+				// failure instead.
+				PRINT(("TempCDCopy: CD read timed out\n"));
+				fTimedOut = true;
 			} else {
-				PRINT(("TempCDCopy: copy failed, encoding directly from CD\n"));
+				PRINT(("TempCDCopy: copy failed (status 0x%08lx: %s), "
+					"encoding directly from CD\n", (uint32)copyStatus,
+					strerror(copyStatus)));
 			}
-			// Tidy up the partial copy either way - a canceled rip and a
-			// failed one both leave an incomplete file behind otherwise.
+			// Tidy up the partial copy either way - a timed-out or
+			// canceled rip and a failed one all leave an incomplete file
+			// behind otherwise.
 			BEntry(tempPath.Path()).Remove();
 		}
 	}
@@ -979,6 +1285,7 @@ public:
 
 	const char* Path() const { return fPath.Path(); }
 	bool WasCanceled() const { return fCanceled; }
+	bool WasTimedOut() const { return fTimedOut; }
 
 private:
 	// Same poll AEEncoder::CheckForCancel() does against this same
@@ -1000,21 +1307,29 @@ private:
 	static status_t Copy(const char* srcPath, const char* dstPath,
 		BMessenger* progressMessenger)
 	{
-		BFile src(srcPath, B_READ_ONLY);
-		status_t status = src.InitCheck();
+		BFile* srcFile = NULL;
+		off_t totalSize = 0;
+		status_t status = TimedOpen(srcPath, B_READ_ONLY, &srcFile,
+			&totalSize, kCdReadTimeout);
 		if (status != B_OK) {
+			if (status != kCdReadTimedOut) {
+				PRINT(("TempCDCopy::Copy: couldn't open source %s: %s\n",
+					srcPath, strerror(status)));
+			}
+			delete srcFile;
 			return status;
 		}
 
 		BFile dst(dstPath, B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
 		status = dst.InitCheck();
 		if (status != B_OK) {
+			PRINT(("TempCDCopy::Copy: couldn't create destination %s: %s\n",
+				dstPath, strerror(status)));
+			delete srcFile;
 			return status;
 		}
 
-		off_t totalSize = 0;
-		bool haveTotalSize = (src.GetSize(&totalSize) == B_OK)
-			&& (totalSize > 0);
+		bool haveTotalSize = (totalSize > 0);
 		bool reportProgress = progressMessenger
 			&& progressMessenger->IsValid() && haveTotalSize;
 
@@ -1029,7 +1344,8 @@ private:
 		ssize_t bytesRead;
 		off_t bytesCopied = 0;
 		float prevPercent = 0.0f;
-		while ((bytesRead = src.Read(buffer, bufferSize)) > 0) {
+		while ((bytesRead = TimedRead(*srcFile, buffer, bufferSize,
+				kCdReadTimeout)) > 0) {
 			// Checked once per chunk (same as the encoders' own status
 			// polling) rather than just leaving cancellation to be noticed
 			// once the whole track has been copied and handed off to the
@@ -1060,12 +1376,14 @@ private:
 		}
 
 		delete[] buffer;
+		delete srcFile;
 		return result;
 	}
 
 	BPath fPath;
 	bool fIsTemp;
 	bool fCanceled;
+	bool fTimedOut;
 };
 
 // Small RAII holder for the cover art bytes EncodeThread() captures (once,
@@ -1246,6 +1564,15 @@ AppView::Encode()
 {
 	PRINT(("AppView::Encode()\n"));
 
+	// Backstop behind the greyed-out Encode button (MUSICBRAINZ_LOOKUP_
+	// STARTED/_FINISHED above) - a MusicBrainz lookup still in flight
+	// hasn't necessarily delivered its cover art/metadata yet, and
+	// EncodeThread() only ever snapshots those once, right at the
+	// start of the run.
+	if (fMusicBrainzLookupsPending > 0) {
+		return;
+	}
+
 	CheckDiskSpace();
 
 	thread_id thread = spawn_thread(AppView::EncodeThread, "_Encoder_",
@@ -1297,8 +1624,20 @@ AppView::EncodeThread(void* args)
 	BString mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId;
 	BObjectList<TrackMBMetadata, true> mbTrackMetadata(20);
 	if (view->LockLooper()) {
-		coverArt.SetTo(view->coverArtImageData, view->coverArtImageSize,
-			view->coverArtImageExt);
+		// Whichever candidate is selected right now - defaulting to the
+		// first, per CoverArtCandidatesView's own "default to the first
+		// image" rule - is what gets locked in for this run. Selecting a
+		// different candidate after this point (e.g. clicking a
+		// thumbnail just as Encode() starts) has no effect on a run
+		// already under way.
+		int32 selected = view->coverArtCandidatesView->SelectedIndex();
+		CoverArtCandidate* candidate = view->coverArtCandidates
+			? (CoverArtCandidate*)view->coverArtCandidates->ItemAt(selected)
+			: NULL;
+		if (candidate) {
+			coverArt.SetTo(candidate->data, candidate->size,
+				candidate->extension);
+		}
 		mbDiscId = view->mbDiscId;
 		mbReleaseId = view->mbReleaseId;
 		mbReleaseGroupId = view->mbReleaseGroupId;
@@ -1355,33 +1694,77 @@ AppView::EncodeThread(void* args)
 
 	for (int i = 0; i < numRows; i++) {
 		row = objList.ItemAt(i);
-		
+
+		// Everything read out of row here is copied by value - a real
+		// BString, and a real deep copy of its entry_ref - rather than
+		// kept as a pointer/const char* aliasing row's own memory. A
+		// device unmounting mid-rip (see AppWindow::MessageReceived()'s
+		// B_DEVICE_UNMOUNTED case and RemoveDeviceItemsFromList() below)
+		// deletes row - and everything it owns - as soon as it's
+		// noticed, which can happen at any point while this loop is
+		// still using what used to be row's data; Cancel()'s
+		// FSS_CANCEL_ENCODING signal only stops this thread at its next
+		// poll point (mainly inside TempCDCopy::Copy(), during the rip
+		// itself), so without these copies a fast-enough unmount could
+		// have the rest of this iteration reading already-freed memory.
+		// Locking the looper for the reads themselves also keeps
+		// RemoveDeviceItemsFromList()/RemoveNodeFromList() (which run
+		// with the looper already locked, being called from
+		// MessageReceived()) from deleting row out from under them in
+		// the first place.
+		BString artist, album, title, year, comment, track, genre;
+		bool haveArtist = false, haveAlbum = false, haveTitle = false;
+		bool haveYear = false, haveComment = false, haveTrack = false;
+		bool haveGenre = false;
+		int32 genreNum = 0;
+		BString outputFile;
+		entry_ref ref;
+		if (!view->LockLooper()) {
+			PRINT(("ERROR: couldn't lock looper to read track fields\n"));
+			settings->SetEncoding(false);
+			encoder->UninitEncoder();
+			system_beep(SYSTEM_BEEP_ENCODING_DONE);
+			return B_ERROR;
+		}
 		tmpStringField = (BStringField*)row->GetField(ARTIST_COLUMN_INDEX);
-		const char* artist = tmpStringField->String();
+		if ((haveArtist = (tmpStringField->String() != NULL))) {
+			artist = tmpStringField->String();
+		}
 		tmpStringField = (BStringField*)row->GetField(ALBUM_COLUMN_INDEX);
-		const char* album = tmpStringField->String();
+		if ((haveAlbum = (tmpStringField->String() != NULL))) {
+			album = tmpStringField->String();
+		}
 		tmpStringField = (BStringField*)row->GetField(TITLE_COLUMN_INDEX);
-		const char* title = tmpStringField->String();
+		if ((haveTitle = (tmpStringField->String() != NULL))) {
+			title = tmpStringField->String();
+		}
 		tmpStringField = (BStringField*)row->GetField(YEAR_COLUMN_INDEX);
-		const char* year = tmpStringField->String();
+		if ((haveYear = (tmpStringField->String() != NULL))) {
+			year = tmpStringField->String();
+		}
 		tmpStringField = (BStringField*)row->GetField(COMMENT_COLUMN_INDEX);
-		const char* comment = tmpStringField->String();
+		if ((haveComment = (tmpStringField->String() != NULL))) {
+			comment = tmpStringField->String();
+		}
 		tmpStringField = (BStringField*)row->GetField(TRACK_COLUMN_INDEX);
-		const char* track = tmpStringField->String();
+		if ((haveTrack = (tmpStringField->String() != NULL))) {
+			track = tmpStringField->String();
+		}
 		tmpStringField = (BStringField*)row->GetField(GENRE_COLUMN_INDEX);
-		const char* genre = tmpStringField->String();
-		int32 genreNum;
-		if (genre) {
-			genreNum = GenreList::Genre(genre);
+		if ((haveGenre = (tmpStringField->String() != NULL))) {
+			genre = tmpStringField->String();
+			genreNum = GenreList::Genre(genre.String());
 		}
 		tmpStringField = (BStringField*)row->GetField(SAVE_AS_COLUMN_INDEX);
-		const char* outputFile = tmpStringField->String();
-		entry_ref* ref = row->EntryRef();
-		BEntry entry(ref);
+		outputFile = tmpStringField->String();
+		ref = *row->EntryRef();
+		view->UnlockLooper();
+
+		BEntry entry(&ref);
 		if (entry.InitCheck() != B_OK) {
 			PRINT(("ERROR: entry failed InitCheck()\n"));
 			BString msg("Error opening file: ");
-			msg << ref->name;
+			msg << ref.name;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
 				BString remaining(STATUS_TRAILING_LABEL);
@@ -1407,7 +1790,7 @@ AppView::EncodeThread(void* args)
 		if (path.InitCheck() != B_OK) {
 			PRINT(("ERROR: path failed InitCheck()\n"));
 			BString msg("Error opening file: ");
-			msg << ref->name;
+			msg << ref.name;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
 				BString remaining(STATUS_TRAILING_LABEL);
@@ -1428,9 +1811,12 @@ AppView::EncodeThread(void* args)
 			return B_ERROR;
 		}
 
-		BPath outputPath(outputFile);
+		BPath outputPath(outputFile.String());
 		if (outputPath.InitCheck() != B_OK) {
-			PRINT(("ERROR: outputPath failed InitCheck()\n"));
+			PRINT(("ERROR: outputPath failed InitCheck() for \"%s\" "
+				"(artist=\"%s\" title=\"%s\" track=\"%s\")\n",
+				outputFile.String(), artist.String(), title.String(),
+				track.String()));
 			BString msg("Error creating path for: ");
 			msg << outputFile;
 			view->AlertUser(msg.String());
@@ -1518,7 +1904,7 @@ AppView::EncodeThread(void* args)
 			view->statusBar->Reset(ripping.String(), remaining.String());
 			view->UnlockLooper();
 		}
-		TempCDCopy tempCopy(ref, path, &statusBarMessenger);
+		TempCDCopy tempCopy(&ref, path, &statusBarMessenger);
 		if (tempCopy.WasCanceled()) {
 			// Same cleanup as the FSS_CANCEL_ENCODING case below - the
 			// difference is this cancellation happened during the rip,
@@ -1542,7 +1928,7 @@ AppView::EncodeThread(void* args)
 			}
 			settings->SetEncoding(false);
 			encoder->UninitEncoder();
-			BEntry outputEntry(outputFile);
+			BEntry outputEntry(outputFile.String());
 			outputEntry.Remove();
 			while (1) {
 				BDirectory directory(outputParent.Path());
@@ -1557,6 +1943,51 @@ AppView::EncodeThread(void* args)
 			}
 			system_beep(SYSTEM_BEEP_ENCODING_DONE);
 			return B_OK;
+		}
+		if (tempCopy.WasTimedOut()) {
+			// Same cleanup as the WasCanceled() case just above - nothing
+			// has been produced for this track yet either way - but this
+			// is reported to the user as a real failure, not a plain
+			// cancel, since the drive stopped answering on its own.
+			PRINT(("CD read timed out during rip.\n"));
+			BString msg("The CD drive stopped responding while ripping ");
+			msg << ref.name;
+			msg << " (no data for over ";
+			msg << CD_READ_TIMEOUT_SECONDS;
+			msg << " seconds). This usually means the disc was ejected or "
+				"the drive was disconnected.\n\nEncoding has been "
+				"stopped.";
+			view->AlertUser(msg.String());
+			if (view->LockLooper()) {
+				BString remaining(STATUS_TRAILING_LABEL);
+				remaining << 0;
+				view->statusBar->Reset(STATUS_LABEL, remaining.String());
+				view->editorView->SetEnabled(true);
+				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetLabel(CANCEL_BTN);
+				view->cancelButton->SetEnabled(true);
+				view->Invalidate();
+				menuBar->SetEnabled(true);
+				menuBar->Invalidate();
+				view->UnlockLooper();
+			}
+			settings->SetEncoding(false);
+			encoder->UninitEncoder();
+			BEntry outputEntry(outputFile.String());
+			outputEntry.Remove();
+			while (1) {
+				BDirectory directory(outputParent.Path());
+				if (directory.CountEntries() > 0) {
+					break;
+				}
+				directory.Unset();
+				BEntry dirEntry(outputParent.Path());
+				dirEntry.Remove();
+				dirEntry.Unset();
+				outputParent.GetParent(&outputParent);
+			}
+			system_beep(SYSTEM_BEEP_ENCODING_DONE);
+			return B_ERROR;
 		}
 		const char* inputFile = tempCopy.Path();
 
@@ -1573,25 +2004,25 @@ AppView::EncodeThread(void* args)
 		encodeMessage.AddString("input file", inputFile);
 		encodeMessage.AddString("output file", outputFile);
 		encodeMessage.AddMessenger("statusBarMessenger", statusBarMessenger);
-		if (artist) {
+		if (haveArtist) {
 			encodeMessage.AddString("artist", artist);
 		}
-		if (album) {
+		if (haveAlbum) {
 			encodeMessage.AddString("album", album);
 		}
-		if (title) {
+		if (haveTitle) {
 			encodeMessage.AddString("title", title);
 		}
-		if (year) {
+		if (haveYear) {
 			encodeMessage.AddString("year", year);
 		}
-		if (comment) {
+		if (haveComment) {
 			encodeMessage.AddString("comment", comment);
 		}
-		if (track) {
+		if (haveTrack) {
 			encodeMessage.AddString("track", track);
 		}
-		if (genre) {
+		if (haveGenre) {
 			encodeMessage.AddString("genre", genre);
 			encodeMessage.AddInt32("genre number", genreNum);
 		}
@@ -1629,7 +2060,7 @@ AppView::EncodeThread(void* args)
 			case FSS_INPUT_NOT_SUPPORTED: {
 					PRINT(("ERROR: input not supported\n"));
 					BString msg("Input File: ");
-					msg << ref->name;
+					msg << ref.name;
 					msg << " cannot be encoded with this encoder. Continue?";
 					BAlert* alert = new BAlert("alert", msg.String(), YES, NO);
 					int32 button = alert->Go();
@@ -1672,7 +2103,7 @@ AppView::EncodeThread(void* args)
 					}
 					settings->SetEncoding(false);
 					encoder->UninitEncoder();
-					BEntry outputEntry(outputFile);
+					BEntry outputEntry(outputFile.String());
 					outputEntry.Remove();
 					while (1) {
 						BDirectory directory(outputParent.Path());
@@ -1689,11 +2120,11 @@ AppView::EncodeThread(void* args)
 				}
 				return B_OK;
 			case B_ERROR: {
-					PRINT(("ERROR: encoding failed\n"));
 					const char* errmsg;
 					encodeMessage.FindString("error", &errmsg);
+					PRINT(("ERROR: encoding failed: %s\n", errmsg));
 					BString msg("Error encoding file: ");
-					msg << ref->name;
+					msg << ref.name;
 					msg << "\n";
 					msg << errmsg;
 					msg << "Cannot continue.";
@@ -1726,11 +2157,16 @@ AppView::EncodeThread(void* args)
 			view->UnlockLooper();
 		}
 
-		// Cover art attaching is deliberately just "drop a cover file
-		// next to the encoded output" for now - embedding it into the
-		// encoded files' own tags/attributes is a later task.
+		// Cover art is both dropped alongside the encoded output as a
+		// plain cover.<ext> file (handy for anything that just looks at
+		// the folder, e.g. Tracker icon previews) and embedded directly
+		// into the encoded file's own tags via WriteCoverArtTag() below,
+		// so the picture travels with the file itself once it leaves this
+		// folder.
 		if (coverArt.HasData()) {
 			view->WriteCoverArt(outputParent, coverArt.Data(), coverArt.Size(),
+				coverArt.Extension());
+			view->WriteCoverArtTag(outputPath, coverArt.Data(), coverArt.Size(),
 				coverArt.Extension());
 		}
 
@@ -1739,7 +2175,8 @@ AppView::EncodeThread(void* args)
 		// encoder->Encode() above - this only adds the MusicBrainz-
 		// specific IDs, which is a no-op when mbDiscId is empty (no
 		// MusicBrainz metadata for this disc).
-		view->WriteMusicBrainzMetadata(outputPath, track ? atol(track) : 0,
+		view->WriteMusicBrainzMetadata(outputPath,
+			haveTrack ? atol(track.String()) : 0,
 			mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
 			&mbTrackMetadata);
 	}
@@ -1841,6 +2278,29 @@ AppView::AlertUser(const char* message)
 	alert->Go();
 }
 
+// Resets cover-art candidate state for a newly loaded disc - called at the
+// top of MessageReceived()'s COVER_ART_FOUND case, before the new set of
+// candidates (if any) is built back up. Also clears both display widgets
+// and leaves coverArtBoxView showing the (now empty) single-image card, so
+// a disc whose new lookup found no cover art at all doesn't keep showing
+// the previous disc's.
+void
+AppView::ClearCoverArtCandidates()
+{
+	PRINT(("AppView::ClearCoverArtCandidates()\n"));
+
+	delete coverArtCandidates;
+	coverArtCandidates = NULL;
+
+	coverArtView->SetCoverArt(NULL);
+	coverArtCandidatesView->Clear();
+
+	BCardLayout* cardLayout = (BCardLayout*)coverArtBoxView->GetLayout();
+	if (cardLayout) {
+		cardLayout->SetVisibleItem((int32)0);
+	}
+}
+
 void
 AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,
 	const BString& extension)
@@ -1876,6 +2336,58 @@ AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,
 	}
 
 	file.Write(data, size);
+}
+
+void
+AppView::WriteCoverArtTag(const BPath& outputPath, const void* data,
+	size_t size, const BString& extension)
+{
+	PRINT(("AppView::WriteCoverArtTag(const BPath&, const void*, size_t, "
+		"const BString&)\n"));
+
+	if (!data || (size == 0)) {
+		return;
+	}
+
+	BString mimeType("image/jpeg");
+	if (extension == "png") {
+		mimeType = "image/png";
+	} else if (extension == "gif") {
+		mimeType = "image/gif";
+	}
+
+	// TagLib's format-agnostic "PICTURE" complex property (TagLib 2.0+)
+	// covers ID3v2 APIC frames for MP3, FLAC's native
+	// METADATA_BLOCK_PICTURE, and Ogg Vorbis's base64 picture comment, all
+	// through the same call - no per-format branching needed, the same
+	// way MusicBrainz's plain text tags above avoid it via PropertyMap.
+	TagLib::FileRef fileRef(outputPath.Path());
+	if (fileRef.isNull() || !fileRef.file()) {
+		PRINT(("AppView::WriteCoverArtTag: TagLib couldn't open %s\n",
+			outputPath.Path()));
+		return;
+	}
+
+	TagLib::VariantMap picture;
+	picture.insert("data", TagLib::ByteVector((const char*)data,
+		(unsigned int)size));
+	picture.insert("mimeType", TagLib::String(mimeType.String()));
+	picture.insert("description", TagLib::String("Cover"));
+	picture.insert("pictureType", TagLib::String("Front Cover"));
+
+	TagLib::List<TagLib::VariantMap> pictures;
+	pictures.append(picture);
+
+	if (!fileRef.file()->setComplexProperties("PICTURE", pictures)) {
+		PRINT(("AppView::WriteCoverArtTag: setComplexProperties failed for "
+			"%s\n", outputPath.Path()));
+		return;
+	}
+
+	if (!fileRef.save()) {
+		PRINT(("AppView::WriteCoverArtTag: TagLib save failed for %s\n",
+			outputPath.Path()));
+	}
 }
 
 void
