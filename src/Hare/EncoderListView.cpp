@@ -56,7 +56,7 @@ EncoderListView::InitView()
 	int32 truncate = 3;
 	float extraspace = 0;
 	
-	AddColumn(new BBitmapColumn("Icon", 16, 16, 16, B_ALIGN_CENTER), COMPLETE_COLUMN_INDEX);
+	AddColumn(new BBitmapColumn(ICON_COLUMN, 16, 16, 16, B_ALIGN_CENTER), COMPLETE_COLUMN_INDEX);
 	
 	extraspace = StringWidth("WW"); // add extraspace equal to width of WW
 	minWidth = StringWidth(FILE_COLUMN) + extraspace;

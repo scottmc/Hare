@@ -15,7 +15,7 @@ NAME = Hare
 TYPE = APP
 
 # 	If you plan to use localization, specify the application's MIME signature.
-APP_MIME_SIG = 
+APP_MIME_SIG = application/x-vnd.haikuarchives.hare
 
 #	The following lines tell Pe and Eddie where the SRCS, RDEFS, and RSRCS are
 #	so that Pe and Eddie can fill them in for you.
@@ -67,7 +67,7 @@ RSRCS = \
 #		you need to specify the path to the library and it's name.
 #		(e.g. for mylib.a, specify "mylib.a" or "path/mylib.a")
  LIBS = $(STDCPPLIBS) hare tag be game media tracker columnlistview \
- 	translation musicbrainz5 discid coverartcc
+ 	translation musicbrainz5 discid coverartcc localestub
 
 #	Specify additional paths to directories following the standard libXXX.so
 #	or libXXX.a naming scheme. You can specify full paths or paths relative
@@ -96,7 +96,7 @@ OPTIMIZE :=
 # 	will recreate only the "locales/en.catkeys" file. Use it as a template
 # 	for creating catkeys for other languages. All localization files must be
 # 	placed in the "locales" subdirectory.
-LOCALES = 
+LOCALES = en
 
 #	Specify all the preprocessor symbols to be defined. The symbols will not
 #	have their values set automatically; you must supply the value (if any) to
@@ -140,3 +140,27 @@ DRIVER_PATH =
 DEVEL_DIRECTORY := \
 	$(shell findpaths -r "makefile_engine" B_FIND_PATH_DEVELOP_DIRECTORY)
 include $(DEVEL_DIRECTORY)/etc/makefile-engine
+
+#	libHare (a STATIC lib) and the 4 encoder add-ons (SHARED add-ons) are
+#	loaded in-process with Hare, into the same BApplication, so at runtime
+#	their B_TRANSLATE_CONTEXT() calls resolve against Hare's own loaded
+#	catalog - they have no catalog of their own to embed, so giving them
+#	their own catkeys/bindcatalogs targets wouldn't do anything useful.
+#	Instead, their translatable strings need to end up in Hare's own
+#	locales/en.catkeys. Only the two headers below actually contain literal
+#	B_TRANSLATE_CONTEXT(...) calls - the encoder .cpp/.h files and
+#	AudioAttributes.cpp just #include them, so scanning the headers alone
+#	is enough for collectcatkeys (which works by text-scanning, not by
+#	following the preprocessor).
+CATKEYS_EXTRA_SRCS = \
+	src/libHare/LibHareStrings.h \
+	src/Encoders/EncoderStrings.h
+
+#	Override the Makefile-Engine's "catkeys" target so it also scans the
+#	sources above, in addition to this app's own $(SRCS). (make will warn
+#	about overriding the recipe defined above via the include - that's
+#	expected; this replacement is the one that runs.)
+.PHONY: catkeys
+catkeys:
+	collectcatkeys -v -s "$(APP_MIME_SIG)" -w -o locales/en.catkeys \
+		$(SRCS) $(CATKEYS_EXTRA_SRCS)

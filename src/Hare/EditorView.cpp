@@ -316,6 +316,41 @@ EditorView::ListSelectionChanged(BMessage* message)
         SetEnabled(genreCheckBox, genreTextControl);
 }
 
+// Resets the editor back to its no-selection state - same fields
+// ListSelectionChanged() clears when numSelected drops to 0, but callable
+// directly for cases (like a CD being ejected) that need the editor wiped
+// without going through an actual list-selection message.
+void
+EditorView::Clear()
+{
+        PRINT(("EditorView::Clear()\n"));
+
+        free(selectedIndexes);
+        selectedIndexes = 0;
+        numSelected = 0;
+
+        artistCheckBox->SetValue(B_CONTROL_OFF);
+        albumCheckBox->SetValue(B_CONTROL_OFF);
+        titleCheckBox->SetValue(B_CONTROL_OFF);
+        yearCheckBox->SetValue(B_CONTROL_OFF);
+        commentCheckBox->SetValue(B_CONTROL_OFF);
+        trackCheckBox->SetValue(B_CONTROL_OFF);
+        genreCheckBox->SetValue(B_CONTROL_OFF);
+
+        EnableCheckBoxes(false);
+        applyButton->SetEnabled(false);
+        SetControlValues(0);
+
+        SetEnabled(artistCheckBox, artistTextControl);
+        SetEnabled(albumCheckBox, albumTextControl);
+        SetEnabled(titleCheckBox, titleTextControl);
+        SetEnabled(yearCheckBox, yearTextControl);
+        SetEnabled(commentCheckBox, commentTextControl);
+        SetEnabled(trackCheckBox, trackTextControl);
+        SetEnabled(genreCheckBox, genreMenuField);
+        SetEnabled(genreCheckBox, genreTextControl);
+}
+
 void
 EditorView::EnableCheckBoxes(bool value)
 {
@@ -378,7 +413,7 @@ EditorView::SetControlValues(BRefRow* row)
                 if (menuItem && (strcmp(genre, "") != 0)) {
                         menuItem->SetMarked(true);
                 } else {
-                        menuItem = menu->FindItem("Other");
+                        menuItem = menu->FindItem(OTHER_GENRE_TXT);
                         menuItem->SetMarked(true);
                         genreTextControl->SetText(genre);
                 }

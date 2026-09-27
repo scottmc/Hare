@@ -25,6 +25,7 @@ public:
 	virtual void MakeFocus(bool focused = true);
 	void ListSelectionChanged(BMessage* message);
 	void SetEnabled(bool value);
+	void Clear();
 private:
 	void InitView();
 	void Apply();

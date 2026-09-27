@@ -8,36 +8,7 @@
 #include <stdio.h>
 
 #include "AEEncoder.h"
-
-#define ADDON_NAME "MP3 GoGo"
-
-#define BITRATE_STR "Bitrate"
-#define _32KBPS  " 32 Kbps                             "
-#define _48KBPS  " 48 Kbps                             "
-#define _64KBPS  " 64 Kbps                             "
-#define _96KBPS  " 96 Kbps                             "
-#define _128KBPS "128 Kbps                             "
-#define _160KBPS "160 Kbps                             "
-#define _192KBPS "192 Kbps                             "
-#define _256KBPS "256 Kbps                             "
-#define _320KBPS "320 Kbps                             "
-#define VBR_0    "Variable Bitrate 0 (High Quality)    "
-#define VBR_1    "Variable Bitrate 1                   "
-#define VBR_2    "Variable Bitrate 2                   "
-#define VBR_3    "Variable Bitrate 3                   "
-#define VBR_4    "Variable Bitrate 4                   "
-#define VBR_5    "Variable Bitrate 5                   "
-#define VBR_6    "Variable Bitrate 6                   "
-#define VBR_7    "Variable Bitrate 7                   "
-#define VBR_8    "Variable Bitrate 8                   "
-#define VBR_9    "Variable Bitrate 9 (High Compression)"
-
-#define OUTPUT_FORMAT_STR "Output Format"
-#define STEREO  "Stereo  "
-#define MONO    "Mono    "
-#define JSTEREO "J-Stereo"
-
-#define PSYCHO_ACOUSTICS_STR "Psycho Acoustics"
+#include "EncoderStrings.h"
 
 #define MP3_MIME_TYPE "audio/x-mpeg"
 #define WAV_MIME_TYPE "audio/wav"

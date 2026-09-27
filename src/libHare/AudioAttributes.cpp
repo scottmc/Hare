@@ -10,14 +10,7 @@
 #include <TypeConstants.h>
 #include "AudioAttributes.h"
 #include "AudioAttribute.h"
-
-#define ARTIST_NAME    "Artist"
-#define ALBUM_NAME     "Album"
-#define TITLE_NAME     "Title"
-#define YEAR_NAME      "Year"
-#define COMMENT_NAME   "Comment"
-#define TRACK_NAME     "Track"
-#define GENRE_NAME     "Genre"
+#include "LibHareStrings.h"
 
 #ifdef _TTE_
 #define RATING_NAME    "Rating"

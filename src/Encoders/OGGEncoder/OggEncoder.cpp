@@ -23,7 +23,7 @@
 
 #include "OggEncoder.h"
 
-OggEncoder::OggEncoder() : AEEncoder(ADDON_NAME) {
+OggEncoder::OggEncoder() : AEEncoder(OGG_ADDON_NAME_TXT) {
 	PRINT(("OggEncoder::OggEncoder()\n"));
 
 	if (FindExecutable(OGG, oggencPath) != B_OK) {
@@ -46,23 +46,23 @@ OggEncoder::Encode(BMessage* message) {
 	char bitrate[4];
 
 	if (GetArgs(&args, message) != B_OK) {
-		message->AddString("error", "Error getting arguments.\n");
+		message->AddString("error", OGG_ERROR_ARGS_TXT);
 		return B_ERROR;
 	}
 
 	if (GetBitrate(bitrate) != B_OK) {
-		message->AddString("error", "Error getting bitrate setting.\n");
+		message->AddString("error", OGG_ERROR_BITRATE_SETTING_TXT);
 		return B_ERROR;
 	}
 
 	//check if input file is of correct type
 	BFile iFile(args.inputFile, B_READ_ONLY);
 	if (iFile.InitCheck() != B_OK) {
-		message->AddString("error", "Error init'ing input file.\n");
+		message->AddString("error", OGG_ERROR_INIT_INPUT_TXT);
 		return B_ERROR;
 	}
 	if (CheckAudioFileType(&iFile, true) != B_OK) {
-		message->AddString("error", "Input file is not a supported WAV/AIFF file.\n");
+		message->AddString("error", OGG_ERROR_UNSUPPORTED_INPUT_TXT);
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
@@ -196,26 +196,26 @@ OggEncoder::LoadDefaultMenu() {
 	menu = new BMenu(name.String());
 
 	//Bitrate Menu
-	bitrateMenu = new BMenu(BITRATE_STR);
+	bitrateMenu = new BMenu(OGG_BITRATE_STR);
 	bitrateMenu->SetRadioMode(true);
 
-	item = new BMenuItem(_112KBPS, NULL);
+	item = new BMenuItem(OGG_BR_112_TXT, NULL);
 	bitrateMenu->AddItem(item);
 
-	item = new BMenuItem(_128KBPS, NULL);
+	item = new BMenuItem(OGG_BR_128_TXT, NULL);
 	item->SetMarked(true);
 	bitrateMenu->AddItem(item);
 
-	item = new BMenuItem(_160KBPS, NULL);
+	item = new BMenuItem(OGG_BR_160_TXT, NULL);
 	bitrateMenu->AddItem(item);
 
-	item = new BMenuItem(_192KBPS, NULL);
+	item = new BMenuItem(OGG_BR_192_TXT, NULL);
 	bitrateMenu->AddItem(item);
 
-	item = new BMenuItem(_256KBPS, NULL);
+	item = new BMenuItem(OGG_BR_256_TXT, NULL);
 	bitrateMenu->AddItem(item);
 
-	item = new BMenuItem(_320KBPS, NULL);
+	item = new BMenuItem(OGG_BR_320_TXT, NULL);
 	bitrateMenu->AddItem(item);
 
 	menu->AddItem(bitrateMenu);
@@ -230,7 +230,7 @@ OggEncoder::GetBitrate(char* bitrate) {
 	BMenuItem* item;
 	BMenu* bitrateMenu;
 
-	item = menu->FindItem(BITRATE_STR);
+	item = menu->FindItem(OGG_BITRATE_STR);
 	if (!item) {
 		return B_ERROR;
 	}
@@ -245,17 +245,17 @@ OggEncoder::GetBitrate(char* bitrate) {
 	}
 
 	const char* label = item->Label();
-	if (strcmp(label, _112KBPS) == 0) {
+	if (strcmp(label, OGG_BR_112_TXT) == 0) {
 		strcpy(bitrate, "112");
-	} else if (strcmp(label, _128KBPS) == 0) {
+	} else if (strcmp(label, OGG_BR_128_TXT) == 0) {
 		strcpy(bitrate, "128");
-	} else if (strcmp(label, _160KBPS) == 0) {
+	} else if (strcmp(label, OGG_BR_160_TXT) == 0) {
 		strcpy(bitrate, "160");
-	} else if (strcmp(label, _192KBPS) == 0) {
+	} else if (strcmp(label, OGG_BR_192_TXT) == 0) {
 		strcpy(bitrate, "192");
-	} else if (strcmp(label, _256KBPS) == 0) {
+	} else if (strcmp(label, OGG_BR_256_TXT) == 0) {
 		strcpy(bitrate, "256");
-	} else if (strcmp(label, _320KBPS) == 0) {
+	} else if (strcmp(label, OGG_BR_320_TXT) == 0) {
 		strcpy(bitrate, "320");
 	}
 

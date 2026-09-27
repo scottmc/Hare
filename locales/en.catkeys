@@ -1,0 +1,78 @@
+1	English	application/x-vnd.haikuarchives.hare	2819674415
+Deselect All	GUIStrings		Deselect All
+Remove	GUIStrings		Remove
+ cannot be encoded with this encoder. Continue?	GUIStrings		 cannot be encoded with this encoder. Continue?
+Error encoding file: 	GUIStrings		Error encoding file: 
+ (no data for over 	GUIStrings		 (no data for over 
+Title	GUIStrings		Title
+Artist	GUIStrings		Artist
+Details Editor	GUIStrings		Details Editor
+Other	GUIStrings		Other
+Songs Remaining: 	GUIStrings		Songs Remaining: 
+Abort	GUIStrings		Abort
+Save Layout	GUIStrings		Save Layout
+Select All	GUIStrings		Select All
+File	FileColumn		File
+Album	GUIStrings		Album
+About...	GUIStrings		About...
+File Path and Name Pattern	GUIStrings		File Path and Name Pattern
+Pick cover art before encoding	GUIStrings		Pick cover art before encoding
+Album = %n	GUIStrings		Album = %n
+Year	GUIStrings		Year
+Apply	GUIStrings		Apply
+alpha	GUIStrings		alpha
+Comment	GUIStrings		Comment
+Yes	GUIStrings		Yes
+ MB.\n\nYou can close this and continue if you like - this is just a warning.	GUIStrings		 MB.\n\nYou can close this and continue if you like - this is just a warning.
+Low disk space: only about 	GUIStrings		Low disk space: only about 
+Track	GUIStrings		Track
+Artist = %a	GUIStrings		Artist = %a
+Encoding Song: 	GUIStrings		Encoding Song: 
+Encoder	GUIStrings		Encoder
+Genre	GUIStrings		Genre
+. Loading a CD on an older Haiku can crash the whole system, so CD support has been disabled in 	GUIStrings		. Loading a CD on an older Haiku can crash the whole system, so CD support has been disabled in 
+Title = %t	GUIStrings		Title = %t
+No CD Mounted	GUIStrings		No CD Mounted
+golden master	GUIStrings		golden master
+Ripping Song: 	GUIStrings		Ripping Song: 
+ seconds). This usually means the disc was ejected or the drive was disconnected.\n\nEncoding has been stopped.	GUIStrings		 seconds). This usually means the disc was ejected or the drive was disconnected.\n\nEncoding has been stopped.
+ MB free on the destination volume, but this encode run may need roughly 	GUIStrings		 MB free on the destination volume, but this encode run may need roughly 
+Please check the addon's documentation.\n	EncoderExeNotFoundRunDoc		Please check the addon's documentation.\n
+Preferences	GUIStrings		Preferences
+Error creating path for: 	ErrorCreatingOutputPath		Error creating path for: 
+File	FileMenu		File
+Error opening file: 	ErrorOpeningFileEntry		Error opening file: 
+One or more items in the list have been deleted.\nEncoding has been canceled.	GUIStrings		One or more items in the list have been deleted.\nEncoding has been canceled.
+The CD drive stopped responding while ripping 	GUIStrings		The CD drive stopped responding while ripping 
+The addon could not find the required executable.	EncoderExeNotFoundInit		The addon could not find the required executable.
+beta	GUIStrings		beta
+Cannot continue.	GUIStrings		Cannot continue.
+ until you update.\n\nYou can still encode existing audio files.	GUIStrings		 until you update.\n\nYou can still encode existing audio files.
+Error creating path for: 	ErrorCreatingOutputDir		Error creating path for: 
+No Available Encoders	GUIStrings		No Available Encoders
+Input File: 	GUIStrings		Input File: 
+Use Encoder Pattern	GUIStrings		Use Encoder Pattern
+gamma	GUIStrings		gamma
+Quit	GUIStrings		Quit
+development	GUIStrings		development
+Revert	GUIStrings		Revert
+Year = %y	GUIStrings		Year = %y
+No	GUIStrings		No
+Genre = %g	GUIStrings		Genre = %g
+Track = %k	GUIStrings		Track = %k
+Icon	GUIStrings		Icon
+) predates the SCSI CD driver fixes in hrev	GUIStrings		) predates the SCSI CD driver fixes in hrev
+The addon could not find the required executable.	EncoderExeNotFoundRun		The addon could not find the required executable.
+Please check the addon's documentation.\n	EncoderExeNotFoundInitDoc		Please check the addon's documentation.\n
+This copy of Haiku (	GUIStrings		This copy of Haiku (
+Save As	GUIStrings		Save As
+Load CD	LoadCdButton		Load CD
+Load CD	LoadCdMenu		Load CD
+Cancel	GUIStrings		Cancel
+Ok	GUIStrings		Ok
+Edit	GUIStrings		Edit
+Comment = %c	GUIStrings		Comment = %c
+Error creating path for: 	ErrorCreatingOutputParent		Error creating path for: 
+Error opening file: 	ErrorOpeningFilePath		Error opening file: 
+Encode	GUIStrings		Encode
+CD support disabled (Haiku too old)	GUIStrings		CD support disabled (Haiku too old)

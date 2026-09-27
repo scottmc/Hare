@@ -275,6 +275,97 @@ private:
 	BMessenger fReplyTo;
 };
 
+// Longest ComputeDiscID() (below) lets discid_read_sparse() block before
+// giving up on it, mirroring TimedRead()'s CD_READ_TIMEOUT_SECONDS in
+// AppView.cpp - libdiscid's Haiku backend issues its own raw SCSI/ATAPI
+// commands to read the disc's table of contents and has no timeout of
+// its own, so a drive that's stopped answering (ejected, disconnected,
+// or - as actually seen - stuck retrying a failed DMA transfer) can
+// leave this call blocked forever. That would leave FetchThread() (and
+// so the MUSICBRAINZ_LOOKUP_STARTED/FINISHED pair, and the Encode
+// button it gates) stuck right along with it.
+#define DISC_ID_READ_TIMEOUT_SECONDS 10
+const bigtime_t kDiscIdReadTimeout = DISC_ID_READ_TIMEOUT_SECONDS * 1000000LL;
+
+// Sentinel TimedDiscIdReadSparse() (below) returns on a timeout - distinct
+// from the real discid_read_sparse()'s own 0 (failure) and 1 (success),
+// same idea as kCdReadTimedOut in AppView.cpp.
+const int kDiscIdReadTimedOut = -1;
+
+struct DiscIdReadArgs {
+	DiscId* disc;
+	BString deviceName;
+	int result;
+	sem_id done;
+};
+
+int32
+DiscIdReadThread(void* cookie)
+{
+	DiscIdReadArgs* args = (DiscIdReadArgs*)cookie;
+	args->result = discid_read_sparse(args->disc, args->deviceName.String(),
+		0);
+	release_sem(args->done);
+	return B_OK;
+}
+
+// Wraps a single discid_read_sparse() call with a hard wall-clock
+// timeout, the same way TimedRead() (AppView.cpp) wraps BFile::Read().
+// The read itself runs on a short-lived helper thread; if it hasn't
+// finished within timeoutMicros, this gives up on it and returns
+// kDiscIdReadTimedOut instead of waiting any longer.
+//
+// On a timeout, the helper thread is killed rather than joined, so it
+// can still be mid-ioctl against 'disc' at the moment it dies -
+// callers MUST treat kDiscIdReadTimedOut as "leaked, don't touch 'disc'
+// again" (no discid_get_error_msg(), no discid_free()) rather than
+// freeing it, for the same reason TimedRead() leaks its buffer on
+// timeout instead of freeing it: that would trade a hang for a
+// use-after-free.
+int
+TimedDiscIdReadSparse(DiscId* disc, const char* deviceName,
+	bigtime_t timeoutMicros)
+{
+	DiscIdReadArgs* args = new (std::nothrow) DiscIdReadArgs();
+	if (!args) {
+		// Couldn't even set up the timeout machinery - fall back to a
+		// plain, untimed read rather than failing the lookup over it.
+		return discid_read_sparse(disc, deviceName, 0);
+	}
+	args->disc = disc;
+	args->deviceName = deviceName;
+	args->result = 0;
+	args->done = create_sem(0, "discid_read_done");
+	if (args->done < B_OK) {
+		int result = discid_read_sparse(disc, deviceName, 0);
+		delete args;
+		return result;
+	}
+
+	thread_id reader = spawn_thread(DiscIdReadThread, "_DiscIdRead_",
+		B_LOW_PRIORITY, args);
+	if (reader < B_OK) {
+		delete_sem(args->done);
+		int result = discid_read_sparse(disc, deviceName, 0);
+		delete args;
+		return result;
+	}
+	resume_thread(reader);
+
+	status_t waitStatus = acquire_sem_etc(args->done, 1, B_RELATIVE_TIMEOUT,
+		timeoutMicros);
+	if (waitStatus != B_OK) {
+		kill_thread(reader);
+		return kDiscIdReadTimedOut;
+	}
+
+	wait_for_thread(reader, NULL);
+	int result = args->result;
+	delete_sem(args->done);
+	delete args;
+	return result;
+}
+
 } // namespace
 
 void
@@ -326,7 +417,18 @@ MusicBrainzLookup::ComputeDiscID(const char* deviceName)
 		return result;
 	}
 
-	if (discid_read_sparse(disc, deviceName, 0) == 0) {
+	int readResult = TimedDiscIdReadSparse(disc, deviceName,
+		kDiscIdReadTimeout);
+	if (readResult == kDiscIdReadTimedOut) {
+		// See TimedDiscIdReadSparse()'s own comment - 'disc' is
+		// deliberately leaked here rather than freed, since the helper
+		// thread that timed out could still be using it.
+		PRINT(("MusicBrainzLookup: discid_read_sparse(\"%s\") timed out "
+			"after %d seconds\n", deviceName, DISC_ID_READ_TIMEOUT_SECONDS));
+		return result;
+	}
+
+	if (readResult == 0) {
 		PRINT(("MusicBrainzLookup: discid_read_sparse(\"%s\") failed: %s\n",
 			deviceName, discid_get_error_msg(disc)));
 		discid_free(disc);

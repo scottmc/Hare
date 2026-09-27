@@ -56,7 +56,7 @@ RSRCS =
 #	- 	if your library does not follow the standard library naming scheme,
 #		you need to specify the path to the library and it's name.
 #		(e.g. for mylib.a, specify "mylib.a" or "path/mylib.a")
-LIBS = hare tag be
+LIBS = hare tag be localestub
 
 #	Specify additional paths to directories following the standard libXXX.so
 #	or libXXX.a naming scheme. You can specify full paths or paths relative
@@ -73,7 +73,7 @@ SYSTEM_INCLUDE_PATHS = $(shell findpaths -e B_FIND_PATH_HEADERS_DIRECTORY taglib
 #	Additional paths paths to look for local headers. These use the form
 #	#include "header". Directories that contain the files in SRCS are
 #	automatically included.
-LOCAL_INCLUDE_PATHS = ../../libHare
+LOCAL_INCLUDE_PATHS = ../../libHare ..
 
 #	Specify the level of optimization that you want. Specify either NONE (O0),
 #	SOME (O1), FULL (O2), or leave blank (for the default optimization level).

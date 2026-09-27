@@ -8,19 +8,7 @@
 #include <stdio.h>
 
 #include "AEEncoder.h"
-
-#define ADDON_NAME "FFmpeg FLAC"
-
-#define COMPRESSION_STR "Compression Level"
-#define LEVEL0 "0 (Fastest)"
-#define LEVEL1 "1"
-#define LEVEL2 "2"
-#define LEVEL3 "3"
-#define LEVEL4 "4"
-#define LEVEL5 "5 (Default)"
-#define LEVEL6 "6"
-#define LEVEL7 "7"
-#define LEVEL8 "8 (Best)"
+#include "EncoderStrings.h"
 
 #define FLAC_MIME_TYPE "audio/x-flac"
 #define WAV_MIME_TYPE "audio/wav"

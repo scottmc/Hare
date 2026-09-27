@@ -23,7 +23,7 @@
 
 #include "FFMpegEncoder.h"
 
-FFMpegEncoder::FFMpegEncoder() : AEEncoder(ADDON_NAME) {
+FFMpegEncoder::FFMpegEncoder() : AEEncoder(FFMPEG_ADDON_NAME_TXT) {
 	PRINT(("FFMpegEncoder::FFMpegEncoder()\n"));
 
 	if (FindExecutable(FFMPEG, ffmpegPath) != B_OK) {
@@ -46,23 +46,23 @@ FFMpegEncoder::Encode(BMessage* message) {
 	char level[4];
 
 	if (GetArgs(&args, message) != B_OK) {
-		message->AddString("error", "Error getting arguments.\n");
+		message->AddString("error", FFMPEG_ERROR_ARGS_TXT);
 		return B_ERROR;
 	}
 
 	if (GetCompressionLevel(level) != B_OK) {
-		message->AddString("error", "Error getting compression level setting.\n");
+		message->AddString("error", FFMPEG_ERROR_COMPRESSION_SETTING_TXT);
 		return B_ERROR;
 	}
 
 	//check if input file is of correct type
 	BFile iFile(args.inputFile, B_READ_ONLY);
 	if (iFile.InitCheck() != B_OK) {
-		message->AddString("error", "Error init'ing input file.\n");
+		message->AddString("error", FFMPEG_ERROR_INIT_INPUT_TXT);
 		return B_ERROR;
 	}
 	if (CheckAudioFileType(&iFile, true) != B_OK) {
-		message->AddString("error", "Input file is not a supported WAV/AIFF file.\n");
+		message->AddString("error", FFMPEG_ERROR_UNSUPPORTED_INPUT_TXT);
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
@@ -220,35 +220,35 @@ FFMpegEncoder::LoadDefaultMenu() {
 	menu = new BMenu(name.String());
 
 	//Compression Level Menu
-	compressionMenu = new BMenu(COMPRESSION_STR);
+	compressionMenu = new BMenu(FFMPEG_COMPRESSION_STR);
 	compressionMenu->SetRadioMode(true);
 
-	item = new BMenuItem(LEVEL0, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL0_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL1, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL1_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL2, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL2_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL3, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL3_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL4, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL4_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL5, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL5_TXT, NULL);
 	item->SetMarked(true);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL6, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL6_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL7, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL7_TXT, NULL);
 	compressionMenu->AddItem(item);
 
-	item = new BMenuItem(LEVEL8, NULL);
+	item = new BMenuItem(FFMPEG_LEVEL8_TXT, NULL);
 	compressionMenu->AddItem(item);
 
 	menu->AddItem(compressionMenu);
@@ -263,7 +263,7 @@ FFMpegEncoder::GetCompressionLevel(char* level) {
 	BMenuItem* item;
 	BMenu* compressionMenu;
 
-	item = menu->FindItem(COMPRESSION_STR);
+	item = menu->FindItem(FFMPEG_COMPRESSION_STR);
 	if (!item) {
 		return B_ERROR;
 	}
@@ -278,23 +278,23 @@ FFMpegEncoder::GetCompressionLevel(char* level) {
 	}
 
 	const char* label = item->Label();
-	if (strcmp(label, LEVEL0) == 0) {
+	if (strcmp(label, FFMPEG_LEVEL0_TXT) == 0) {
 		strcpy(level, "0");
-	} else if (strcmp(label, LEVEL1) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL1_TXT) == 0) {
 		strcpy(level, "1");
-	} else if (strcmp(label, LEVEL2) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL2_TXT) == 0) {
 		strcpy(level, "2");
-	} else if (strcmp(label, LEVEL3) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL3_TXT) == 0) {
 		strcpy(level, "3");
-	} else if (strcmp(label, LEVEL4) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL4_TXT) == 0) {
 		strcpy(level, "4");
-	} else if (strcmp(label, LEVEL5) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL5_TXT) == 0) {
 		strcpy(level, "5");
-	} else if (strcmp(label, LEVEL6) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL6_TXT) == 0) {
 		strcpy(level, "6");
-	} else if (strcmp(label, LEVEL7) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL7_TXT) == 0) {
 		strcpy(level, "7");
-	} else if (strcmp(label, LEVEL8) == 0) {
+	} else if (strcmp(label, FFMPEG_LEVEL8_TXT) == 0) {
 		strcpy(level, "8");
 	}
 

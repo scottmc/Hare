@@ -139,6 +139,19 @@ CoverArtCandidatesView::Draw(BRect updateRect)
 	}
 }
 
+BBitmap*
+CoverArtCandidatesView::CopySelectedBitmap() const
+{
+	PRINT(("CoverArtCandidatesView::CopySelectedBitmap()\n"));
+
+	if (!fCandidates || (fSelectedIndex < 0) || (fSelectedIndex >= fCount)
+			|| !fCandidates[fSelectedIndex]) {
+		return NULL;
+	}
+
+	return new BBitmap(fCandidates[fSelectedIndex], true);
+}
+
 void
 CoverArtCandidatesView::MouseDown(BPoint where)
 {

@@ -8,7 +8,11 @@
 #define COMPANY "HaikuArchives"
 #define COMPANY_WWW "github.com/HaikuArchives/Hare"
 #define APPLICATION "Hare"
-#define PREFS "Preferences"
+// PREFS lives in GUIStrings.h now (it's user-facing text, "Preferences"),
+// not a dead duplicate here - having it in both files with the same text
+// used to be harmless, but once GUIStrings.h's copy became a
+// B_TRANSLATE_CONTEXT() call the two macros diverged and the compiler
+// started warning about the redefinition.
 
 #define WINDOW_FILE "Hare Window"
 #define SETTINGS "Hare Settings"

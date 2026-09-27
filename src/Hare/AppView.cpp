@@ -142,6 +142,10 @@ AppView::InitView()
 							   new BMessage(ENCODE_MSG));
 	cancelButton = new BButton("cancelButton", CANCEL_BTN,
 							   new BMessage(CANCEL_MSG));
+	// Nothing to cancel until an encode/rip is actually under way -
+	// EncodeThread() enables this the moment it starts, and every
+	// completion/failure/cancel path disables it again.
+	cancelButton->SetEnabled(false);
 
 	listView = new EncoderListView();
 	listView->SetExplicitMinSize(BSize(0, 125));
@@ -177,9 +181,27 @@ AppView::InitView()
 		"coverArtCandidatesScrollView", coverArtCandidatesView,
 		B_WILL_DRAW | B_FRAME_EVENTS, true, false, B_NO_BORDER);
 
+	// The selector strip's own card also carries a reminder label below
+	// it - Encode() (see its own comment) swaps this whole card out for
+	// coverArtCard, showing just the selected image, the moment
+	// encoding actually starts, so the reminder is only ever visible
+	// while there's still a choice left to make.
+	BStringView* coverArtCandidatesLabel = new BStringView(
+		"coverArtCandidatesLabel", PICK_COVER_ART_LABEL);
+	coverArtCandidatesLabel->SetAlignment(B_ALIGN_CENTER);
+
+	BView* coverArtCandidatesCard = new BView("coverArtCandidatesCard", 0);
+	BLayoutBuilder::Group<>(coverArtCandidatesCard, B_VERTICAL,
+				B_USE_HALF_ITEM_SPACING)
+		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
+					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
+		.Add(coverArtCandidatesScrollView, 1.0f)
+		.Add(coverArtCandidatesLabel, 0.0f)
+	.End();
+
 	coverArtBoxView->SetLayout(new BCardLayout());
 	coverArtBoxView->AddChild(coverArtCard);
-	coverArtBoxView->AddChild(coverArtCandidatesScrollView);
+	coverArtBoxView->AddChild(coverArtCandidatesCard);
 	((BCardLayout*)coverArtBoxView->GetLayout())->SetVisibleItem((int32)0);
 
 	// Details editor and cover art side by side, with a vertical splitter
@@ -881,6 +903,17 @@ AppView::RemoveDeviceItemsFromList(int32 device)
 		}
 	}
 
+	if (deleted) {
+		// The ejected disc's rows are gone from the list - its cover art,
+		// details editor contents and "ready to encode" state all belonged
+		// to that same disc, so drop them too rather than leaving them
+		// showing stale info (or an enabled Encode button) for a CD that's
+		// no longer in the drive.
+		ClearCoverArtCandidates();
+		editorView->Clear();
+		encodeButton->SetEnabled(false);
+	}
+
 	if (deleted && settings->IsEncoding()) {
 		(new BAlert(0, REMOVED_TXT, OK))->Go(0);
 		Cancel();
@@ -1218,7 +1251,8 @@ public:
 		fPath(originalPath),
 		fIsTemp(false),
 		fCanceled(false),
-		fTimedOut(false)
+		fTimedOut(false),
+		fMediaGone(false)
 	{
 		BVolume volume(ref->device);
 		fs_info info;
@@ -1264,6 +1298,19 @@ public:
 				// failure instead.
 				PRINT(("TempCDCopy: CD read timed out\n"));
 				fTimedOut = true;
+			} else if (copyStatus == B_DEV_NO_MEDIA) {
+				// The disc itself is gone (ejected, or the drive dropped
+				// it) rather than just slow to answer - same reasoning as
+				// the timeout case just above: falling through to
+				// "encoding directly from CD" below would just hand the
+				// encoder addon a path that can't be read either, and
+				// unlike TimedRead() above, the addons (they shell out to
+				// their own command-line tools - see GoGoEncoder and
+				// friends) have no timeout of their own to catch that -
+				// it can hang indefinitely instead of just failing loudly.
+				// Report it as a hard failure instead.
+				PRINT(("TempCDCopy: media removed\n"));
+				fMediaGone = true;
 			} else {
 				PRINT(("TempCDCopy: copy failed (status 0x%08lx: %s), "
 					"encoding directly from CD\n", (uint32)copyStatus,
@@ -1286,6 +1333,7 @@ public:
 	const char* Path() const { return fPath.Path(); }
 	bool WasCanceled() const { return fCanceled; }
 	bool WasTimedOut() const { return fTimedOut; }
+	bool WasMediaGone() const { return fMediaGone; }
 
 private:
 	// Same poll AEEncoder::CheckForCancel() does against this same
@@ -1384,6 +1432,7 @@ private:
 	bool fIsTemp;
 	bool fCanceled;
 	bool fTimedOut;
+	bool fMediaGone;
 };
 
 // Small RAII holder for the cover art bytes EncodeThread() captures (once,
@@ -1546,13 +1595,11 @@ AppView::CheckDiskSpace()
 	bool worseThanLastTime = (freeBytes < fLastCheckedFreeBytes);
 
 	if (lowOnSpace && (firstCheck || worseThanLastTime)) {
-		BString msg("Low disk space: only about ");
+		BString msg(LOW_DISK_SPACE_PREFIX_TXT);
 		msg << (freeBytes / (1024 * 1024));
-		msg << " MB free on the destination volume, but this encode run "
-			"may need roughly ";
+		msg << LOW_DISK_SPACE_MIDDLE_TXT;
 		msg << (neededBytes / (1024 * 1024));
-		msg << " MB.\n\nYou can close this and continue if you like - "
-			"this is just a warning.";
+		msg << LOW_DISK_SPACE_SUFFIX_TXT;
 		AlertUser(msg.String());
 	}
 
@@ -1571,6 +1618,23 @@ AppView::Encode()
 	// start of the run.
 	if (fMusicBrainzLookupsPending > 0) {
 		return;
+	}
+
+	// While there was more than one cover art candidate to choose from,
+	// coverArtBoxView has been showing the selector strip (plus its
+	// "Pick cover art before encoding" reminder) instead of coverArtView
+	// - see InitView()'s own comment. Now that a run is actually
+	// starting, that choice is locked in (EncodeThread() below reads the
+	// same selection), so swap over to showing just the picked image,
+	// the same as the single-candidate case always has. CopySelectedBitmap()
+	// returns NULL - and so leaves the current card alone - when the
+	// selector was never showing in the first place (no candidates).
+	BBitmap* selectedCandidateBitmap
+		= coverArtCandidatesView->CopySelectedBitmap();
+	if (selectedCandidateBitmap) {
+		coverArtView->SetCoverArt(selectedCandidateBitmap);
+		((BCardLayout*)coverArtBoxView->GetLayout())->SetVisibleItem(
+			(int32)0);
 	}
 
 	CheckDiskSpace();
@@ -1593,9 +1657,9 @@ AppView::EncodeThread(void* args)
 	if (!encoder || (encoder->InitCheck() != B_OK)) {
 		if (encoder->InitCheck() == FSS_EXE_NOT_FOUND) {
 			PRINT(("ERROR: exe not found\n"));
-			BString msg("The addon could not find the required executable.");
+			BString msg(ENCODER_EXE_NOT_FOUND_INIT_TXT);
 			msg << "\n";
-			msg << "Please check the addon's documentation.\n";
+			msg << ENCODER_EXE_NOT_FOUND_INIT_DOC_TXT;
 			view->AlertUser(msg.String());
 		}
 		system_beep(SYSTEM_BEEP_ENCODING_DONE);
@@ -1608,7 +1672,6 @@ AppView::EncodeThread(void* args)
 	if (view->LockLooper()) {
 		view->editorView->SetEnabled(false);
 		view->encodeButton->SetEnabled(false);
-		view->cancelButton->SetLabel(ABORT_BTN);
 		view->cancelButton->SetEnabled(true);
 		view->Invalidate();
 		menuBar->SetEnabled(false);
@@ -1763,7 +1826,7 @@ AppView::EncodeThread(void* args)
 		BEntry entry(&ref);
 		if (entry.InitCheck() != B_OK) {
 			PRINT(("ERROR: entry failed InitCheck()\n"));
-			BString msg("Error opening file: ");
+			BString msg(ERROR_OPENING_FILE_ENTRY_TXT);
 			msg << ref.name;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
@@ -1772,8 +1835,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1789,7 +1851,7 @@ AppView::EncodeThread(void* args)
 		entry.GetPath(&path);
 		if (path.InitCheck() != B_OK) {
 			PRINT(("ERROR: path failed InitCheck()\n"));
-			BString msg("Error opening file: ");
+			BString msg(ERROR_OPENING_FILE_PATH_TXT);
 			msg << ref.name;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
@@ -1798,8 +1860,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1817,7 +1878,7 @@ AppView::EncodeThread(void* args)
 				"(artist=\"%s\" title=\"%s\" track=\"%s\")\n",
 				outputFile.String(), artist.String(), title.String(),
 				track.String()));
-			BString msg("Error creating path for: ");
+			BString msg(ERROR_CREATING_OUTPUT_PATH_TXT);
 			msg << outputFile;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
@@ -1826,8 +1887,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1843,7 +1903,7 @@ AppView::EncodeThread(void* args)
 		outputPath.GetParent(&outputParent);
 		if (outputParent.InitCheck() != B_OK) {
 			PRINT(("ERROR: outputParent failed InitCheck()\n"));
-			BString msg("Error creating path for: ");
+			BString msg(ERROR_CREATING_OUTPUT_PARENT_TXT);
 			msg << outputFile;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
@@ -1852,8 +1912,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1866,7 +1925,7 @@ AppView::EncodeThread(void* args)
 		}
 		if (create_directory(outputParent.Path(), 0777) != B_OK) {
 			PRINT(("ERROR: failed to create directory\n"));
-			BString msg("Error creating path for: ");
+			BString msg(ERROR_CREATING_OUTPUT_DIR_TXT);
 			msg << outputFile;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
@@ -1875,8 +1934,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1919,8 +1977,7 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -1950,13 +2007,11 @@ AppView::EncodeThread(void* args)
 			// is reported to the user as a real failure, not a plain
 			// cancel, since the drive stopped answering on its own.
 			PRINT(("CD read timed out during rip.\n"));
-			BString msg("The CD drive stopped responding while ripping ");
+			BString msg(CD_TIMEOUT_PREFIX_TXT);
 			msg << ref.name;
-			msg << " (no data for over ";
+			msg << CD_TIMEOUT_MIDDLE_TXT;
 			msg << CD_READ_TIMEOUT_SECONDS;
-			msg << " seconds). This usually means the disc was ejected or "
-				"the drive was disconnected.\n\nEncoding has been "
-				"stopped.";
+			msg << CD_TIMEOUT_SUFFIX_TXT;
 			view->AlertUser(msg.String());
 			if (view->LockLooper()) {
 				BString remaining(STATUS_TRAILING_LABEL);
@@ -1964,8 +2019,50 @@ AppView::EncodeThread(void* args)
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
 				view->editorView->SetEnabled(true);
 				view->encodeButton->SetEnabled(true);
-				view->cancelButton->SetLabel(CANCEL_BTN);
-				view->cancelButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
+				view->Invalidate();
+				menuBar->SetEnabled(true);
+				menuBar->Invalidate();
+				view->UnlockLooper();
+			}
+			settings->SetEncoding(false);
+			encoder->UninitEncoder();
+			BEntry outputEntry(outputFile.String());
+			outputEntry.Remove();
+			while (1) {
+				BDirectory directory(outputParent.Path());
+				if (directory.CountEntries() > 0) {
+					break;
+				}
+				directory.Unset();
+				BEntry dirEntry(outputParent.Path());
+				dirEntry.Remove();
+				dirEntry.Unset();
+				outputParent.GetParent(&outputParent);
+			}
+			system_beep(SYSTEM_BEEP_ENCODING_DONE);
+			return B_ERROR;
+		}
+		if (tempCopy.WasMediaGone()) {
+			// Same shape as the WasTimedOut() case just above, for the
+			// same reason - nothing produced for this track yet, reported
+			// as a real failure rather than a plain cancel - but this is
+			// the disc having actually been removed (B_DEV_NO_MEDIA),
+			// caught immediately rather than after a timeout, so it gets
+			// its own, more accurate message instead of reusing the
+			// "stopped responding... no data for over N seconds" one.
+			PRINT(("CD media removed during rip.\n"));
+			BString msg(CD_MEDIA_REMOVED_PREFIX_TXT);
+			msg << ref.name;
+			msg << CD_MEDIA_REMOVED_SUFFIX_TXT;
+			view->AlertUser(msg.String());
+			if (view->LockLooper()) {
+				BString remaining(STATUS_TRAILING_LABEL);
+				remaining << 0;
+				view->statusBar->Reset(STATUS_LABEL, remaining.String());
+				view->editorView->SetEnabled(true);
+				view->encodeButton->SetEnabled(true);
+				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
 				menuBar->SetEnabled(true);
 				menuBar->Invalidate();
@@ -2035,9 +2132,9 @@ AppView::EncodeThread(void* args)
 				break;
 			case FSS_EXE_NOT_FOUND: {
 					PRINT(("ERROR: exe not found\n"));
-					BString msg("The addon could not find the required executable.");
+					BString msg(ENCODER_EXE_NOT_FOUND_RUN_TXT);
 					msg << "\n";
-					msg << "Please check the addon's dccumentation.\n";
+					msg << ENCODER_EXE_NOT_FOUND_RUN_DOC_TXT;
 					view->AlertUser(msg.String());
 					if (view->LockLooper()) {
 						BString remaining(STATUS_TRAILING_LABEL);
@@ -2045,8 +2142,7 @@ AppView::EncodeThread(void* args)
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
 						view->editorView->SetEnabled(true);
 						view->encodeButton->SetEnabled(true);
-						view->cancelButton->SetLabel(CANCEL_BTN);
-						view->cancelButton->SetEnabled(true);
+						view->cancelButton->SetEnabled(false);
 						view->Invalidate();
 						menuBar->SetEnabled(true);
 						menuBar->Invalidate();
@@ -2059,9 +2155,9 @@ AppView::EncodeThread(void* args)
 				return B_ERROR;
 			case FSS_INPUT_NOT_SUPPORTED: {
 					PRINT(("ERROR: input not supported\n"));
-					BString msg("Input File: ");
+					BString msg(INPUT_NOT_SUPPORTED_PREFIX_TXT);
 					msg << ref.name;
-					msg << " cannot be encoded with this encoder. Continue?";
+					msg << INPUT_NOT_SUPPORTED_SUFFIX_TXT;
 					BAlert* alert = new BAlert("alert", msg.String(), YES, NO);
 					int32 button = alert->Go();
 					if (button == 1) {
@@ -2071,8 +2167,7 @@ AppView::EncodeThread(void* args)
 							view->statusBar->Reset(STATUS_LABEL, remaining.String());
 							view->editorView->SetEnabled(true);
 							view->encodeButton->SetEnabled(true);
-							view->cancelButton->SetLabel(CANCEL_BTN);
-							view->cancelButton->SetEnabled(true);
+							view->cancelButton->SetEnabled(false);
 							view->Invalidate();
 							menuBar->SetEnabled(true);
 							menuBar->Invalidate();
@@ -2094,8 +2189,7 @@ AppView::EncodeThread(void* args)
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
 						view->editorView->SetEnabled(true);
 						view->encodeButton->SetEnabled(true);
-						view->cancelButton->SetLabel(CANCEL_BTN);
-						view->cancelButton->SetEnabled(true);
+						view->cancelButton->SetEnabled(false);
 						view->Invalidate();
 						menuBar->SetEnabled(true);
 						menuBar->Invalidate();
@@ -2123,11 +2217,11 @@ AppView::EncodeThread(void* args)
 					const char* errmsg;
 					encodeMessage.FindString("error", &errmsg);
 					PRINT(("ERROR: encoding failed: %s\n", errmsg));
-					BString msg("Error encoding file: ");
+					BString msg(ERROR_ENCODING_FILE_TXT);
 					msg << ref.name;
 					msg << "\n";
 					msg << errmsg;
-					msg << "Cannot continue.";
+					msg << ERROR_ENCODING_CANNOT_CONTINUE_TXT;
 					view->AlertUser(msg.String());
 					if (view->LockLooper()) {
 						BString remaining(STATUS_TRAILING_LABEL);
@@ -2135,8 +2229,7 @@ AppView::EncodeThread(void* args)
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
 						view->editorView->SetEnabled(true);
 						view->encodeButton->SetEnabled(true);
-						view->cancelButton->SetLabel(CANCEL_BTN);
-						view->cancelButton->SetEnabled(true);
+						view->cancelButton->SetEnabled(false);
 						view->Invalidate();
 						menuBar->SetEnabled(true);
 						menuBar->Invalidate();
@@ -2190,8 +2283,7 @@ AppView::EncodeThread(void* args)
 		view->statusBar->Reset(STATUS_LABEL, remaining.String());
 		view->editorView->SetEnabled(true);
 		view->encodeButton->SetEnabled(true);
-		view->cancelButton->SetLabel(CANCEL_BTN);
-		view->cancelButton->SetEnabled(true);
+		view->cancelButton->SetEnabled(false);
 		view->Invalidate();
 		menuBar->SetEnabled(true);
 		menuBar->Invalidate();

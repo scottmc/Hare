@@ -220,16 +220,14 @@ AppWindow::CheckHaikuRevision()
 			&& (revision < kMinSafeHaikuRevision)) {
 		fCdOperationsAllowed = false;
 
-		BString msg("This copy of Haiku (");
+		BString msg(OLD_HAIKU_PREFIX_TXT);
 		msg << __get_haiku_revision();
-		msg << ") predates the SCSI CD driver fixes in hrev";
+		msg << OLD_HAIKU_HREV_TXT;
 		msg << kMinSafeHaikuRevision;
-		msg << ". Loading a CD on an older Haiku can crash the whole "
-			"system, so CD support has been disabled in ";
+		msg << OLD_HAIKU_DISABLED_IN_TXT;
 		msg << APPLICATION;
-		msg << " until you update.\n\nYou can still encode existing "
-			"audio files.";
-		BAlert* alert = new BAlert(APPLICATION, msg.String(), "OK", NULL,
+		msg << OLD_HAIKU_UNTIL_UPDATE_TXT;
+		BAlert* alert = new BAlert(APPLICATION, msg.String(), OK, NULL,
 			NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
 		alert->Go();
 	}
@@ -291,7 +289,7 @@ AppWindow::LoadCDMenu()
 
 	if (!fCdOperationsAllowed) {
 		loadCdMenu->AddItem(new BMenuItem(
-			"CD support disabled (Haiku too old)", NULL));
+			CD_DISABLED_MENU_ITEM_TXT, NULL));
 		return;
 	}
 
@@ -359,7 +357,7 @@ AppWindow::LoadEncoderMenu()
 		if (encoderAddon > 0) {
 			AEEncoder* encoder = settings->Encoder();
 			if (encoder) {
-				if (menuBar->RemoveItem(encoder->GetMenu())) {
+				if (!menuBar->RemoveItem(encoder->GetMenu())) {
 					PRINT(("Error removing encoder menu.\n"));
 				}
 				settings->SetEncoder(NULL);
@@ -489,7 +487,7 @@ AppWindow::MenuItemSelected(BMessage* message)
 				if (encoderAddon > 0) {
 					AEEncoder* encoder = settings->Encoder();
 					if (encoder) {
-						if (menuBar->RemoveItem(encoder->GetMenu())) {
+						if (!menuBar->RemoveItem(encoder->GetMenu())) {
 							PRINT(("Error removing encoder menu.\n"));
 						}
 						settings->SetEncoder(NULL);
@@ -597,7 +595,9 @@ AppWindow::AboutRequested()
 				<< "." << versionInfo.minor;
 			if (versionInfo.variety != B_FINAL_VERSION) {
 				const char* varietyNames[] =
-					{"development", "alpha", "beta", "gamma", "golden master" };
+					{VERSION_VARIETY_DEVELOPMENT_TXT, VERSION_VARIETY_ALPHA_TXT,
+					VERSION_VARIETY_BETA_TXT, VERSION_VARIETY_GAMMA_TXT,
+					VERSION_VARIETY_GOLDEN_MASTER_TXT};
 				version << " (" << varietyNames[versionInfo.variety] << ")";
 			}
 			about->SetVersion(version.String());
@@ -724,7 +724,7 @@ AppWindow::QuitRequested()
 	if (encoderAddon > 0) {
 		AEEncoder* encoder = settings->Encoder();
 		if (encoder) {
-			if (menuBar->RemoveItem(encoder->GetMenu())) {
+			if (!menuBar->RemoveItem(encoder->GetMenu())) {
 				PRINT(("Error removing encoder menu.\n"));
 			}
 			settings->SetEncoder(NULL);

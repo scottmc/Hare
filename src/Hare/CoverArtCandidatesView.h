@@ -47,6 +47,14 @@ public:
 	int32 SelectedIndex() const { return fSelectedIndex; }
 	int32 CountCandidates() const { return fCount; }
 
+	// Returns a fresh, independently-owned copy of whichever candidate
+	// bitmap is currently selected - the caller is free to hand it to
+	// something else's SetCoverArt()-style ownership transfer without
+	// disturbing this view's own copy (still shown in the strip, e.g. if
+	// Encode() is later canceled). NULL if there's nothing selected
+	// (no candidates, or the selected slot's bitmap didn't decode).
+	BBitmap* CopySelectedBitmap() const;
+
 private:
 	BRect ThumbnailRect(int32 index) const;
 

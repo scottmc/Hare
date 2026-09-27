@@ -8,16 +8,7 @@
 #include <stdio.h>
 
 #include "AEEncoder.h"
-
-#define ADDON_NAME "OGG Encoder"
-
-#define BITRATE_STR "Bitrate"
-#define _112KBPS "112 Kbps"
-#define _128KBPS "128 Kbps"
-#define _160KBPS "160 Kbps"
-#define _192KBPS "192 Kbps"
-#define _256KBPS "256 Kbps"
-#define _320KBPS "320 Kbps"
+#include "EncoderStrings.h"
 
 #define OGG_MIME_TYPE "audio/x-vorbis"
 #define WAV_MIME_TYPE "audio/wav"

@@ -24,7 +24,7 @@
 
 #include "MP3Lame.h"
 
-MP3Lame::MP3Lame() : AEEncoder(ADDON_NAME) {
+MP3Lame::MP3Lame() : AEEncoder(LAME_ADDON_NAME_TXT) {
 	PRINT(("MP3Lame::MP3Lame()\n"));
 
 	if (FindExecutable(LAME, lamePath) != B_OK) {
@@ -35,7 +35,7 @@ MP3Lame::MP3Lame() : AEEncoder(ADDON_NAME) {
 	}
 
 	if (menu) {
-		BMenuItem* item = menu->FindItem(_32KBPS);
+		BMenuItem* item = menu->FindItem(LAME_BR_32_TXT);
 		if (!item) {
 			delete menu;
 			menu = 0;
@@ -61,38 +61,38 @@ MP3Lame::Encode(BMessage* message) {
 
 	//set required fields; quit if not found or error
 	if (message->FindString("input file", &inputFile) != B_OK) {
-		message->AddString("error", "Error getting input path.\n");
+		message->AddString("error", LAME_ERROR_INPUT_PATH_TXT);
 		return B_ERROR;
 	}
 	if (message->FindString("output file", &outputFile) != B_OK) {
-		message->AddString("error", "Error getting output path.\n");
+		message->AddString("error", LAME_ERROR_OUTPUT_PATH_TXT);
 		return B_ERROR;
 	}
 	if (message->FindMessenger("statusBarMessenger", &messenger) != B_OK) {
-		message->AddString("error", "Error getting status bar messenger.\n");
+		message->AddString("error", LAME_ERROR_STATUSBAR_TXT);
 		return B_ERROR;
 	}
 	if (GetBitrate(bitrate, &vbr) != B_OK) {
-		message->AddString("error", "Error getting bitrate setting.\n");
+		message->AddString("error", LAME_ERROR_BITRATE_SETTING_TXT);
 		return B_ERROR;
 	}
 	if (GetFormat(format) != B_OK) {
-		message->AddString("error", "Error getting format setting.\n");
+		message->AddString("error", LAME_ERROR_FORMAT_SETTING_TXT);
 		return B_ERROR;
 	}
 	if (GetPsycho(psycho) != B_OK) {
-		message->AddString("error", "Error getting psychoacoustic setting.\n");
+		message->AddString("error", LAME_ERROR_PSYCHOACOUSTIC_SETTING_TXT);
 		return B_ERROR;
 	}
 
 	//check if input file is of correct type
 	BFile iFile(inputFile, B_READ_ONLY);
 	if (iFile.InitCheck() != B_OK) {
-		message->AddString("error", "Error init'ing input file.\n");
+		message->AddString("error", LAME_ERROR_INIT_INPUT_TXT);
 		return B_ERROR;
 	}
 	if (CheckAudioFileType(&iFile) != B_OK) {
-		message->AddString("error", "Input file is not a supported WAV file.\n");
+		message->AddString("error", LAME_ERROR_UNSUPPORTED_INPUT_TXT);
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
@@ -136,7 +136,7 @@ MP3Lame::Encode(BMessage* message) {
 	thread_id lame = CommandIO(filedes, argc, argv);
 	if (lame <= B_ERROR) {
 		PRINT(("ERROR: can't load lame image\n"));
-		message->AddString("error", "Error running lame.\n");
+		message->AddString("error", LAME_ERROR_RUNNING_TXT);
 		return B_ERROR;
 	}
 	out = fdopen(filedes[0], "r");
@@ -193,84 +193,84 @@ MP3Lame::LoadDefaultMenu() {
 	menu = new BMenu(name.String());
 
 	//Bitrate Menu
-	bitrateMenu = new BMenu(BITRATE_STR);
+	bitrateMenu = new BMenu(LAME_BITRATE_STR);
 	bitrateMenu->SetRadioMode(true);
-	item = new BMenuItem(_32KBPS, NULL);
+	item = new BMenuItem(LAME_BR_32_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_48KBPS, NULL);
+	item = new BMenuItem(LAME_BR_48_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_64KBPS, NULL);
+	item = new BMenuItem(LAME_BR_64_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_96KBPS, NULL);
+	item = new BMenuItem(LAME_BR_96_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_128KBPS, NULL);
+	item = new BMenuItem(LAME_BR_128_TXT, NULL);
 	item->SetMarked(true);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_160KBPS, NULL);
+	item = new BMenuItem(LAME_BR_160_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_192KBPS, NULL);
+	item = new BMenuItem(LAME_BR_192_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_256KBPS, NULL);
+	item = new BMenuItem(LAME_BR_256_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(_320KBPS, NULL);
+	item = new BMenuItem(LAME_BR_320_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_0, NULL);
+	item = new BMenuItem(LAME_VBR_0_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_1, NULL);
+	item = new BMenuItem(LAME_VBR_1_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_2, NULL);
+	item = new BMenuItem(LAME_VBR_2_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_3, NULL);
+	item = new BMenuItem(LAME_VBR_3_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_4, NULL);
+	item = new BMenuItem(LAME_VBR_4_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_5, NULL);
+	item = new BMenuItem(LAME_VBR_5_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_6, NULL);
+	item = new BMenuItem(LAME_VBR_6_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_7, NULL);
+	item = new BMenuItem(LAME_VBR_7_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_8, NULL);
+	item = new BMenuItem(LAME_VBR_8_TXT, NULL);
 	bitrateMenu->AddItem(item);
-	item = new BMenuItem(VBR_9, NULL);
+	item = new BMenuItem(LAME_VBR_9_TXT, NULL);
 	bitrateMenu->AddItem(item);
 	menu->AddItem(bitrateMenu);
 
 	//Output Format Menu
-	BMenu* outputFormatMenu = new BMenu(OUTPUT_FORMAT_STR);
+	BMenu* outputFormatMenu = new BMenu(LAME_OUTPUT_FORMAT_STR);
 	outputFormatMenu->SetRadioMode(true);
-	item = new BMenuItem(STEREO, NULL);
+	item = new BMenuItem(LAME_STEREO_TXT, NULL);
 	item->SetMarked(true);
 	outputFormatMenu->AddItem(item);
-	item = new BMenuItem(MONO, NULL);
+	item = new BMenuItem(LAME_MONO_TXT, NULL);
 	outputFormatMenu->AddItem(item);
-	item = new BMenuItem(JSTEREO, NULL);
+	item = new BMenuItem(LAME_JSTEREO_TXT, NULL);
 	outputFormatMenu->AddItem(item);
 	menu->AddItem(outputFormatMenu);
 
 	//Misc Items
-	BMenu* psychoMenu = new BMenu(PSYCHO_ACOUSTICS_STR);
+	BMenu* psychoMenu = new BMenu(LAME_PSYCHO_ACOUSTICS_STR);
 	psychoMenu->SetRadioMode(true);
-	item = new BMenuItem(PSY_0, NULL);
+	item = new BMenuItem(LAME_PSY_0_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_1, NULL);
+	item = new BMenuItem(LAME_PSY_1_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_2, NULL);
+	item = new BMenuItem(LAME_PSY_2_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_3, NULL);
+	item = new BMenuItem(LAME_PSY_3_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_4, NULL);
+	item = new BMenuItem(LAME_PSY_4_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_5, NULL);
+	item = new BMenuItem(LAME_PSY_5_TXT, NULL);
 	item->SetMarked(true);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_6, NULL);
+	item = new BMenuItem(LAME_PSY_6_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_7, NULL);
+	item = new BMenuItem(LAME_PSY_7_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_8, NULL);
+	item = new BMenuItem(LAME_PSY_8_TXT, NULL);
 	psychoMenu->AddItem(item);
-	item = new BMenuItem(PSY_9, NULL);
+	item = new BMenuItem(LAME_PSY_9_TXT, NULL);
 	psychoMenu->AddItem(item);
 	menu->AddItem(psychoMenu);
 	
@@ -284,7 +284,7 @@ MP3Lame::GetBitrate(char* bitrate, bool* vbr) {
 	BMenuItem* item;
 	BMenu* bitrateMenu;
 
-	item = menu->FindItem(BITRATE_STR);
+	item = menu->FindItem(LAME_BITRATE_STR);
 	if (!item) {
 		return B_ERROR;
 	}
@@ -299,63 +299,63 @@ MP3Lame::GetBitrate(char* bitrate, bool* vbr) {
 	}
 
 	const char* label = item->Label();
-	if (strcmp(label, _32KBPS) == 0) {
+	if (strcmp(label, LAME_BR_32_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "32");
 	}
-	if (strcmp(label, _48KBPS) == 0) {
+	if (strcmp(label, LAME_BR_48_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "48");
 	}
-	if (strcmp(label, _64KBPS) == 0) {
+	if (strcmp(label, LAME_BR_64_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "64");
-	} else if (strcmp(label, _96KBPS) == 0) {
+	} else if (strcmp(label, LAME_BR_96_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "96");
-	} else if (strcmp(label, _128KBPS) == 0) {
+	} else if (strcmp(label, LAME_BR_128_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "128");
-	} else if (strcmp(label, _160KBPS) == 0) {
+	} else if (strcmp(label, LAME_BR_160_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "160");
-	} else if (strcmp(label, _192KBPS) == 0) {
+	} else if (strcmp(label, LAME_BR_192_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "192");
-	} else if (strcmp(label, _256KBPS) == 0) {
+	} else if (strcmp(label, LAME_BR_256_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "256");
-	} else if (strcmp(label, _320KBPS) == 0) {
+	} else if (strcmp(label, LAME_BR_320_TXT) == 0) {
 		*vbr = false;
 		strcpy(bitrate, "320");
-	} else if (strcmp(label, VBR_0) == 0) {
+	} else if (strcmp(label, LAME_VBR_0_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "0");
-	} else if (strcmp(label, VBR_1) == 0) {
+	} else if (strcmp(label, LAME_VBR_1_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "1");
-	} else if (strcmp(label, VBR_2) == 0) {
+	} else if (strcmp(label, LAME_VBR_2_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "2");
-	} else if (strcmp(label, VBR_3) == 0) {
+	} else if (strcmp(label, LAME_VBR_3_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "3");
-	} else if (strcmp(label, VBR_4) == 0) {
+	} else if (strcmp(label, LAME_VBR_4_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "4");
-	} else if (strcmp(label, VBR_5) == 0) {
+	} else if (strcmp(label, LAME_VBR_5_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "5");
-	} else if (strcmp(label, VBR_6) == 0) {
+	} else if (strcmp(label, LAME_VBR_6_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "6");
-	} else if (strcmp(label, VBR_7) == 0) {
+	} else if (strcmp(label, LAME_VBR_7_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "7");
-	} else if (strcmp(label, VBR_8) == 0) {
+	} else if (strcmp(label, LAME_VBR_8_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "8");
-	} else if (strcmp(label, VBR_9) == 0) {
+	} else if (strcmp(label, LAME_VBR_9_TXT) == 0) {
 		*vbr = true;
 		strcpy(bitrate, "9");
 	}
@@ -370,7 +370,7 @@ MP3Lame::GetFormat(char* format) {
 	BMenuItem* item;
 	BMenu* formatMenu;
 
-	item = menu->FindItem(OUTPUT_FORMAT_STR);
+	item = menu->FindItem(LAME_OUTPUT_FORMAT_STR);
 	if (!item) {
 		return B_ERROR;
 	}
@@ -386,11 +386,11 @@ MP3Lame::GetFormat(char* format) {
 
 	const char* label = item->Label();
 
-	if (strcmp(label, STEREO) == 0) {
+	if (strcmp(label, LAME_STEREO_TXT) == 0) {
 		strcpy(format, STEREO_CODE);
-	} else if (strcmp(label, MONO) == 0) {
+	} else if (strcmp(label, LAME_MONO_TXT) == 0) {
 		strcpy(format, MONO_CODE);
-	} else if (strcmp(label, JSTEREO) == 0) {
+	} else if (strcmp(label, LAME_JSTEREO_TXT) == 0) {
 		strcpy(format, JSTEREO_CODE);
 	}
 
@@ -403,7 +403,7 @@ MP3Lame::GetPsycho(char* psycho) {
 	BMenuItem* item;
 	BMenu* psychoMenu;
 
-	item = menu->FindItem(PSYCHO_ACOUSTICS_STR);
+	item = menu->FindItem(LAME_PSYCHO_ACOUSTICS_STR);
 	if (!item) {
 		return B_ERROR;
 	}
@@ -419,25 +419,25 @@ MP3Lame::GetPsycho(char* psycho) {
 
 	const char* label = item->Label();
 
-	if (strcmp(label, PSY_0) == 0) {
+	if (strcmp(label, LAME_PSY_0_TXT) == 0) {
 		strcpy(psycho, "0");
-	} else if (strcmp(label, PSY_1) == 0) {
+	} else if (strcmp(label, LAME_PSY_1_TXT) == 0) {
 		strcpy(psycho, "1");
-	} else if (strcmp(label, PSY_2) == 0) {
+	} else if (strcmp(label, LAME_PSY_2_TXT) == 0) {
 		strcpy(psycho, "2");
-	} else if (strcmp(label, PSY_3) == 0) {
+	} else if (strcmp(label, LAME_PSY_3_TXT) == 0) {
 		strcpy(psycho, "3");
-	} else if (strcmp(label, PSY_4) == 0) {
+	} else if (strcmp(label, LAME_PSY_4_TXT) == 0) {
 		strcpy(psycho, "4");
-	} else if (strcmp(label, PSY_5) == 0) {
+	} else if (strcmp(label, LAME_PSY_5_TXT) == 0) {
 		strcpy(psycho, "5");
-	} else if (strcmp(label, PSY_6) == 0) {
+	} else if (strcmp(label, LAME_PSY_6_TXT) == 0) {
 		strcpy(psycho, "6");
-	} else if (strcmp(label, PSY_7) == 0) {
+	} else if (strcmp(label, LAME_PSY_7_TXT) == 0) {
 		strcpy(psycho, "7");
-	} else if (strcmp(label, PSY_8) == 0) {
+	} else if (strcmp(label, LAME_PSY_8_TXT) == 0) {
 		strcpy(psycho, "8");
-	} else if (strcmp(label, PSY_9) == 0) {
+	} else if (strcmp(label, LAME_PSY_9_TXT) == 0) {
 		strcpy(psycho, "9");
 	}
 

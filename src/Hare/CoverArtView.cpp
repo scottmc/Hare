@@ -21,6 +21,7 @@
 #include <Window.h>
 
 #include "CommandConstants.h"
+#include "GUIStrings.h"
 
 
 namespace {
@@ -31,7 +32,9 @@ namespace {
 const float kLoadCdIconSize = 32.0f;
 const float kLoadCdLabelGap = 4.0f;
 const float kLoadCdButtonPadding = 8.0f;
-const char* kLoadCdButtonLabel = "Load CD";
+// Not cached as a global: B_TRANSLATE_CONTEXT() needs the app catalog
+// loaded, which isn't guaranteed yet during static/global init, so the
+// macro is evaluated fresh at each use site below instead.
 
 } // namespace
 
@@ -211,7 +214,7 @@ CoverArtView::DrawLoadCdButton(BRect square)
 	}
 	SetDrawingMode(B_OP_COPY);
 
-	BString label(kLoadCdButtonLabel);
+	BString label(LOAD_CD_BUTTON_TXT);
 	float labelWidth = StringWidth(label.String());
 	font_height fh;
 	GetFontHeight(&fh);
@@ -231,7 +234,7 @@ CoverArtView::LoadCdButtonRect(BRect square) const
 	GetFontHeight(&fh);
 	float labelHeight = ceilf(fh.ascent + fh.descent + fh.leading);
 
-	float labelWidth = StringWidth(kLoadCdButtonLabel);
+	float labelWidth = StringWidth(LOAD_CD_BUTTON_TXT);
 	float blockWidth = (labelWidth > kLoadCdIconSize)
 		? labelWidth : kLoadCdIconSize;
 	float blockHeight = kLoadCdIconSize + kLoadCdLabelGap + labelHeight;
