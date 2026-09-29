@@ -55,6 +55,7 @@
 
 #include "AppDefs.h"
 #include "AppWindow.h"
+#include "BarberPoleView.h"
 #include "CommandConstants.h"
 #include "CheckMark.h"
 #include "CoverArtCandidatesView.h"
@@ -156,7 +157,22 @@ AppView::InitView()
 	statusBar = new BStatusBar("statusBar", STATUS_LABEL,
 							   remaining.String());
 	statusBar->AddFilter(new StatusBarFilter());
-	
+
+	// statusBoxView shares its one BCardLayout slot between statusBar
+	// (the normal case - a real percentage, while ripping/encoding) and
+	// barberPoleView (an indeterminate task with no percentage to show,
+	// currently just MusicBrainzLookup's disc ID/metadata/cover art
+	// fetch) - see UpdateStatusCard(), which is the only thing that
+	// switches between the two.
+	barberPoleView = new BarberPoleView("barberPoleView",
+		B_WILL_DRAW | B_FRAME_EVENTS);
+
+	statusBoxView = new BView("statusBoxView", 0);
+	statusBoxView->SetLayout(new BCardLayout());
+	statusBoxView->AddChild(statusBar);
+	statusBoxView->AddChild(barberPoleView);
+	((BCardLayout*)statusBoxView->GetLayout())->SetVisibleItem((int32)0);
+
 	BLayoutBuilder::Group<>(editorBoxView, B_HORIZONTAL)
 		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_BIG_INSETS,
 					B_USE_DEFAULT_SPACING, B_USE_BIG_INSETS)
@@ -224,7 +240,7 @@ AppView::InitView()
 			.Add(listView, 0.0f)
 		.End()
 		.AddGroup(B_HORIZONTAL)
-			.Add(statusBar, 0.0f)
+			.Add(statusBoxView, 0.0f)
 			.AddGroup(B_VERTICAL)
 				.AddStrut(B_USE_HALF_ITEM_SPACING)
 				.AddGroup(B_HORIZONTAL)
@@ -417,6 +433,7 @@ AppView::MessageReceived(BMessage* message)
 				// has actually delivered them.
 				fMusicBrainzLookupsPending++;
 				encodeButton->SetEnabled(false);
+				UpdateStatusCard();
 			}
 			break;
 		case MUSICBRAINZ_LOOKUP_FINISHED: {
@@ -427,6 +444,7 @@ AppView::MessageReceived(BMessage* message)
 						&& !settings->IsEncoding()) {
 					encodeButton->SetEnabled(true);
 				}
+				UpdateStatusCard();
 			}
 			break;
 		case SELECT_ALL_MSG:
@@ -1673,6 +1691,15 @@ AppView::EncodeThread(void* args)
 		view->editorView->SetEnabled(false);
 		view->encodeButton->SetEnabled(false);
 		view->cancelButton->SetEnabled(true);
+		// The real progress bar always wins over the barber pole - see
+		// UpdateStatusCard()'s own comment. In practice
+		// fMusicBrainzLookupsPending is already guaranteed to be 0 here
+		// (Encode stays disabled while any lookup is pending, and the
+		// menu bar - Load CD included - stays disabled for as long as
+		// this encode run is active, so nothing can start a new one
+		// until this run's own completion path re-enables it), but this
+		// costs nothing and removes any doubt.
+		view->UpdateStatusCard();
 		view->Invalidate();
 		menuBar->SetEnabled(false);
 		menuBar->Invalidate();
@@ -2250,12 +2277,6 @@ AppView::EncodeThread(void* args)
 			view->UnlockLooper();
 		}
 
-		// Cover art is both dropped alongside the encoded output as a
-		// plain cover.<ext> file (handy for anything that just looks at
-		// the folder, e.g. Tracker icon previews) and embedded directly
-		// into the encoded file's own tags via WriteCoverArtTag() below,
-		// so the picture travels with the file itself once it leaves this
-		// folder.
 		if (coverArt.HasData()) {
 			view->WriteCoverArt(outputParent, coverArt.Data(), coverArt.Size(),
 				coverArt.Extension());
@@ -2263,11 +2284,6 @@ AppView::EncodeThread(void* args)
 				coverArt.Extension());
 		}
 
-		// The standard Audio:*/tag fields (artist/album/title/etc.) are
-		// already written by the encoder addon itself, as part of
-		// encoder->Encode() above - this only adds the MusicBrainz-
-		// specific IDs, which is a no-op when mbDiscId is empty (no
-		// MusicBrainz metadata for this disc).
 		view->WriteMusicBrainzMetadata(outputPath,
 			haveTrack ? atol(track.String()) : 0,
 			mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
@@ -2305,11 +2321,6 @@ AppView::SaveLayout()
 		layout.AddRect("windowFrame", Window()->Frame());
 	}
 
-	// Splitter positions aren't tracked anywhere as a single "position"
-	// value - what actually reflects where the user left them is each
-	// side's current on-screen size, so that's what gets saved (and later
-	// handed straight back to BSplitView::SetItemWeight() as the weight,
-	// which works fine since only the ratio between the two matters).
 	if (topSplitView && (topSplitView->CountChildren() == 2)) {
 		layout.AddFloat("topSplitWeight", topSplitView->ChildAt(0)->Frame().Width());
 		layout.AddFloat("topSplitWeight", topSplitView->ChildAt(1)->Frame().Width());
@@ -2323,6 +2334,7 @@ AppView::SaveLayout()
 	settings->SetLayoutState(&layout);
 	settings->SaveSettings();
 }
+
 
 void
 AppView::RestoreLayout()
@@ -2347,6 +2359,7 @@ AppView::RestoreLayout()
 	}
 }
 
+
 void
 AppView::Cancel()
 {
@@ -2361,21 +2374,40 @@ AppView::Cancel()
 	}
 }
 
+
 void
 AppView::AlertUser(const char* message)
 {
 	PRINT(("AppView::AlertUser(const char*)\n"));
 	BAlert* alert = new BAlert("alert", message, OK, NULL, NULL, B_WIDTH_AS_USUAL,
 							   B_WARNING_ALERT);
-	alert->Go();
+ 	alert->Go();
 }
 
-// Resets cover-art candidate state for a newly loaded disc - called at the
-// top of MessageReceived()'s COVER_ART_FOUND case, before the new set of
-// candidates (if any) is built back up. Also clears both display widgets
-// and leaves coverArtBoxView showing the (now empty) single-image card, so
-// a disc whose new lookup found no cover art at all doesn't keep showing
-// the previous disc's.
+
+void
+AppView::UpdateStatusCard()
+{
+	PRINT(("AppView::UpdateStatusCard()\n"));
+
+	BCardLayout* cardLayout = (BCardLayout*)statusBoxView->GetLayout();
+	if (!cardLayout) {
+		return;
+	}
+
+	bool showBarberPole = !settings->IsEncoding()
+		&& (fMusicBrainzLookupsPending > 0);
+
+	if (showBarberPole) {
+		barberPoleView->Start(MUSICBRAINZ_LOOKUP_LABEL_TXT);
+		cardLayout->SetVisibleItem((int32)1);
+	} else {
+		barberPoleView->Stop();
+		cardLayout->SetVisibleItem((int32)0);
+	}
+}
+
+
 void
 AppView::ClearCoverArtCandidates()
 {
@@ -2392,6 +2424,7 @@ AppView::ClearCoverArtCandidates()
 		cardLayout->SetVisibleItem((int32)0);
 	}
 }
+
 
 void
 AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,

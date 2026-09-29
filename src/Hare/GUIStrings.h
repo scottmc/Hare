@@ -18,6 +18,8 @@
 #define RIPPING_LABEL B_TRANSLATE_CONTEXT("Ripping Song: ", "GUIStrings")
 #define STATUS_TRAILING_LABEL B_TRANSLATE_CONTEXT("Songs Remaining: ", "GUIStrings")
 
+#define MUSICBRAINZ_LOOKUP_LABEL_TXT B_TRANSLATE_CONTEXT("Looking up disc info...", "GUIStrings")
+
 #define OK B_TRANSLATE_CONTEXT("Ok", "GUIStrings")
 #define YES B_TRANSLATE_CONTEXT("Yes", "GUIStrings")
 #define NO B_TRANSLATE_CONTEXT("No", "GUIStrings")

@@ -21,6 +21,7 @@ class BSplitView;
 class BStatusBar;
 class BStringView;
 class BTextControl;
+class BarberPoleView;
 class CoverArtCandidatesView;
 class CoverArtView;
 class EditorView;
@@ -88,6 +89,16 @@ private:
 		const BString& releaseGroupId, const BString& artistId,
 		const BObjectList<TrackMBMetadata, true>* trackMetadata);
 	void ClearCoverArtCandidates();
+	// Picks which of statusBoxView's two cards (statusBar, the normal
+	// progress display, or barberPoleView, the indeterminate one) should
+	// be visible right now, and starts/stops barberPoleView's animation
+	// to match: the real progress bar always wins while an encode/rip is
+	// actually running (settings->IsEncoding()), otherwise the barber
+	// pole shows for as long as a MusicBrainz lookup is still in flight
+	// (fMusicBrainzLookupsPending > 0). Called from EncodeThread() right
+	// as it starts, and from MessageReceived()'s MUSICBRAINZ_LOOKUP_
+	// STARTED/_FINISHED cases.
+	void UpdateStatusCard();
 	PrefWindow* prefWin;
 	EncoderListView* listView;
 	EditorView* editorView;
@@ -101,6 +112,10 @@ private:
 	BButton* encodeButton;
 	BButton* cancelButton;
 	BStatusBar* statusBar;
+	// Holds statusBar and barberPoleView as two BCardLayout cards sharing
+	// the same spot in the window - see UpdateStatusCard().
+	BView* statusBoxView;
+	BarberPoleView* barberPoleView;
 	bool cancel;
 	// Free space (in bytes) on the destination volume as of the last
 	// time CheckDiskSpace() actually ran - see its own comment for how
