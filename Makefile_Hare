@@ -81,7 +81,8 @@ LIBPATHS = objects_libhare
 #	"#include <header>". Directories that contain the files in SRCS are
 #	NOT auto-included here.
 SYSTEM_INCLUDE_PATHS = $(shell findpaths -e B_FIND_PATH_HEADERS_DIRECTORY private/interface) \
-	/boot/system/develop/headers/taglib
+	/boot/system/develop/headers/taglib \
+	$(wildcard /boot/system/develop/headers/$(shell getarch)/taglib)
 
 #	Additional paths paths to look for local headers. These use the form
 #	#include "header". Directories that contain the files in SRCS are
