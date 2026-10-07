@@ -1,6 +1,8 @@
-1	English	application/x-vnd.haikuarchives.hare	2819674415
+1	English	application/x-vnd.haikuarchives.hare	2486927572
 Deselect All	GUIStrings		Deselect All
 Remove	GUIStrings		Remove
+File Path and Name Pattern for 	GUIString		File Path and Name Pattern for 
+.\n\nEncoding has been stopped.	GUIStrings		.\n\nEncoding has been stopped.
  cannot be encoded with this encoder. Continue?	GUIStrings		 cannot be encoded with this encoder. Continue?
 Error encoding file: 	GUIStrings		Error encoding file: 
  (no data for over 	GUIStrings		 (no data for over 
@@ -9,7 +11,6 @@ Artist	GUIStrings		Artist
 Details Editor	GUIStrings		Details Editor
 Other	GUIStrings		Other
 Songs Remaining: 	GUIStrings		Songs Remaining: 
-Abort	GUIStrings		Abort
 Save Layout	GUIStrings		Save Layout
 Select All	GUIStrings		Select All
 File	FileColumn		File
@@ -46,15 +47,16 @@ One or more items in the list have been deleted.\nEncoding has been canceled.	GU
 The CD drive stopped responding while ripping 	GUIStrings		The CD drive stopped responding while ripping 
 The addon could not find the required executable.	EncoderExeNotFoundInit		The addon could not find the required executable.
 beta	GUIStrings		beta
+Looking up disc info...	GUIStrings		Looking up disc info...
 Cannot continue.	GUIStrings		Cannot continue.
  until you update.\n\nYou can still encode existing audio files.	GUIStrings		 until you update.\n\nYou can still encode existing audio files.
-Error creating path for: 	ErrorCreatingOutputDir		Error creating path for: 
 No Available Encoders	GUIStrings		No Available Encoders
+Error creating path for: 	ErrorCreatingOutputDir		Error creating path for: 
 Input File: 	GUIStrings		Input File: 
 Use Encoder Pattern	GUIStrings		Use Encoder Pattern
 gamma	GUIStrings		gamma
-Quit	GUIStrings		Quit
 development	GUIStrings		development
+Quit	GUIStrings		Quit
 Revert	GUIStrings		Revert
 Year = %y	GUIStrings		Year = %y
 No	GUIStrings		No
@@ -63,6 +65,7 @@ Track = %k	GUIStrings		Track = %k
 Icon	GUIStrings		Icon
 ) predates the SCSI CD driver fixes in hrev	GUIStrings		) predates the SCSI CD driver fixes in hrev
 The addon could not find the required executable.	EncoderExeNotFoundRun		The addon could not find the required executable.
+The disc was removed while ripping 	GUIStrings		The disc was removed while ripping 
 Please check the addon's documentation.\n	EncoderExeNotFoundInitDoc		Please check the addon's documentation.\n
 This copy of Haiku (	GUIStrings		This copy of Haiku (
 Save As	GUIStrings		Save As

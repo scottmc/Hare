@@ -8,6 +8,7 @@
 #include <Box.h>
 #include <Button.h>
 #include <LayoutBuilder.h>
+#include <String.h>
 #include <StringView.h>
 #include <TextControl.h>
 
@@ -36,17 +37,25 @@ PrefWindow::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
 		case SAVE_PREFS: {
+				// The pattern belongs to whichever encoder is currently
+				// selected - AEEncoder persists it to that encoder's own
+				// settings file (keyed by encoder name), so switching
+				// encoders never clobbers another encoder's pattern.
 				AEEncoder* encoder = settings->Encoder();
 				if (encoder) {
 					encoder->SetPattern(fileNamePatternTextControl->Text());
 				}
-				settings->SetPathPattern(fileNamePatternTextControl->Text());
 				settings->SaveSettings();
 				be_app_messenger.SendMessage(new BMessage(FILE_NAME_PATTERN_CHANGED));
 			}
 			break;
 		case REVERT_PREFS: {
-				fileNamePatternTextControl->SetText(settings->PathPattern());
+				AEEncoder* encoder = settings->Encoder();
+				if (encoder) {
+					// GetPattern() falls back to (and persists) the
+					// encoder's own default if its pattern is blank/unset.
+					fileNamePatternTextControl->SetText(encoder->GetPattern());
+				}
 			}
 			break;
 		case ENCODER_PATTERN_PREFS: {
@@ -64,9 +73,17 @@ PrefWindow::MessageReceived(BMessage* message)
 void
 PrefWindow::InitWindow()
 {
+	AEEncoder* encoder = settings->Encoder();
+
 	BBox* fileNamePatternBox = new BBox("fileNamePatternBox");
-	fileNamePatternBox->SetLabel(FILE_NAME_PATTERN_BOX_LABEL);
-	
+	if (encoder) {
+		BString boxLabel(FILE_NAME_PATTERN_BOX_LABEL_FOR);
+		boxLabel << encoder->GetName();
+		fileNamePatternBox->SetLabel(boxLabel.String());
+	} else {
+		fileNamePatternBox->SetLabel(FILE_NAME_PATTERN_BOX_LABEL);
+	}
+
 	artistStringView = new BStringView("artist", ARTIST_LABEL);
 	yearStringView = new BStringView("year", YEAR_LABEL);
 	commentStringView = new BStringView("comment", COMMENT_LABEL);
@@ -76,7 +93,13 @@ PrefWindow::InitWindow()
 	genreStringView = new BStringView("genre", GENRE_LABEL);
 
 	const char* str = "";
-	str = settings->PathPattern();
+	if (encoder) {
+		// GetPattern() falls back to (and persists) the encoder's own
+		// default if its pattern is blank/unset.
+		str = encoder->GetPattern();
+	} else {
+		str = settings->PathPattern();
+	}
 	fileNamePatternTextControl = new BTextControl("fileNamePatternTextControl",
 													B_EMPTY_STRING, str, NULL);
 

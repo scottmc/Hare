@@ -160,9 +160,27 @@ CATKEYS_EXTRA_SRCS = \
 
 #	Override the Makefile-Engine's "catkeys" target so it also scans the
 #	sources above, in addition to this app's own $(SRCS). (make will warn
-#	about overriding the recipe defined above via the include - that's
-#	expected; this replacement is the one that runs.)
+#	about overriding the recipes defined below via the include - that's
+#	expected; these replacements are the ones that run.)
+#
+#	collectcatkeys itself only takes a single already-preprocessed file
+#	(run "collectcatkeys" with no args to see its usage), never a list of
+#	.cpp/.h files directly - the engine's own catkeys recipe (see
+#	$(DEVEL_DIRECTORY)/etc/makefile-engine) gets there by first catting
+#	all of $(SRCS) through the compiler with -DB_COLLECTING_CATKEYS to
+#	produce one intermediate $(OBJ_DIR)/$(NAME).pre file, then running
+#	collectcatkeys on that. This override reproduces those same two
+#	steps, just with $(CATKEYS_EXTRA_SRCS) folded into what gets
+#	preprocessed alongside $(SRCS).
 .PHONY: catkeys
-catkeys:
-	collectcatkeys -v -s "$(APP_MIME_SIG)" -w -o locales/en.catkeys \
-		$(SRCS) $(CATKEYS_EXTRA_SRCS)
+catkeys: $(CATKEYS_DIR)/en.catkeys
+
+$(OBJ_DIR)/$(NAME).pre: $(SRCS) $(CATKEYS_EXTRA_SRCS)
+	@mkdir -p $(OBJ_DIR)
+	-cat $(SRCS) $(CATKEYS_EXTRA_SRCS) | $(CC) -E -x c++ $(INCLUDES) $(CFLAGS) \
+		-DB_COLLECTING_CATKEYS - | grep -av '^#' > $(OBJ_DIR)/$(NAME).pre
+
+$(CATKEYS_DIR)/en.catkeys: $(OBJ_DIR)/$(NAME).pre
+	@mkdir -p $(CATKEYS_DIR)
+	collectcatkeys -v -w -s "$(APP_MIME_SIG)" -o $(CATKEYS_DIR)/en.catkeys \
+		$(OBJ_DIR)/$(NAME).pre

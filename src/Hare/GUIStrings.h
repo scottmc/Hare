@@ -60,6 +60,7 @@
 #define NO_AVAILABLE_ENCODERS B_TRANSLATE_CONTEXT("No Available Encoders", "GUIStrings")
 
 #define FILE_NAME_PATTERN_BOX_LABEL B_TRANSLATE_CONTEXT("File Path and Name Pattern", "GUIStrings")
+#define FILE_NAME_PATTERN_BOX_LABEL_FOR B_TRANSLATE_CONTEXT("File Path and Name Pattern for ", "GUIString")
 #define FILE_NAME_PATTERN_LABEL B_TRANSLATE_CONTEXT("Save As:", "GUIStrings")
 
 #define EDITOR_LABEL B_TRANSLATE_CONTEXT("Details Editor", "GUIStrings")
