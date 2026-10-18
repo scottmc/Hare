@@ -190,7 +190,13 @@ AppView::InitView()
 	BLayoutBuilder::Group<>(coverArtCard, B_HORIZONTAL)
 		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
 					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
-		.Add(coverArtView, 0.0f)
+		// Needs a non-zero weight: with a weight of 0 the layout can leave
+		// the view at its 150x150 PreferredSize() even when the box is
+		// smaller (low resolution screens/small windows), so the view
+		// ends up bigger than what's visible and gets clipped by the box,
+		// which makes the centered square and Load CD button look
+		// off-center. With a weight the view shrinks to fit.
+		.Add(coverArtView, 1.0f)
 	.End();
 
 	BScrollView* coverArtCandidatesScrollView = new BScrollView(
@@ -214,6 +220,20 @@ AppView::InitView()
 		.Add(coverArtCandidatesScrollView, 1.0f)
 		.Add(coverArtCandidatesLabel, 0.0f)
 	.End();
+
+	// BCardLayout sizes itself to the largest minimum of ALL its cards,
+	// visible or not. The candidates card's natural minimum (96px thumbnail
+	// strip + scrollbar + the "Pick cover art before encoding" label) is
+	// roughly 205x165, far more than a small/low resolution window can
+	// show, so even while coverArtCard was the visible card the box was
+	// laid out at that size and clipped. Explicit minimums keep each card
+	// able to shrink down to about 100x100; the candidates strip scrolls
+	// horizontally anyway, and the label just gets clipped when narrow.
+	coverArtCandidatesScrollView->SetExplicitMinSize(
+		BSize(0, B_SIZE_UNSET));
+	coverArtCandidatesLabel->SetExplicitMinSize(BSize(0, B_SIZE_UNSET));
+	coverArtCard->SetExplicitMinSize(BSize(100, 100));
+	coverArtCandidatesCard->SetExplicitMinSize(BSize(100, 100));
 
 	coverArtBoxView->SetLayout(new BCardLayout());
 	coverArtBoxView->AddChild(coverArtCard);
