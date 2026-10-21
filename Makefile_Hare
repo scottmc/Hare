@@ -17,6 +17,14 @@ TYPE = APP
 # 	If you plan to use localization, specify the application's MIME signature.
 APP_MIME_SIG = application/x-vnd.haikuarchives.hare
 
+#	TagKit, the reusable tag / cover art library (github.com/scottmc/tagkit),
+#	is a git submodule at src/tagkit and is compiled into Hare. Its tagkit.mk
+#	lists TagKit's source files, libraries and include paths. For now only
+#	its core (no windows or views) is used; the views come in when Hare's
+#	own views of the same names are retired.
+TAGKIT_DIR = src/tagkit
+include $(TAGKIT_DIR)/tagkit.mk
+
 #	The following lines tell Pe and Eddie where the SRCS, RDEFS, and RSRCS are
 #	so that Pe and Eddie can fill them in for you.
 #%{
@@ -36,6 +44,7 @@ SRCS = \
 	 src/Hare/RefRow.cpp  \
 	 src/Hare/Settings.cpp  \
 	 src/Hare/StatusBarFilter.cpp  \
+	 $(TAGKIT_CORE_SRCS) \
 
 
 #	Specify the resource definition files to use. Full or relative paths can be
@@ -68,7 +77,7 @@ RSRCS = \
 #		you need to specify the path to the library and it's name.
 #		(e.g. for mylib.a, specify "mylib.a" or "path/mylib.a")
  LIBS = $(STDCPPLIBS) hare tag be game media tracker columnlistview \
- 	translation musicbrainz5 discid coverart localestub
+ 	translation musicbrainz5 discid coverart localestub $(TAGKIT_LIBS)
 
 #	Specify additional paths to directories following the standard libXXX.so
 #	or libXXX.a naming scheme. You can specify full paths or paths relative
@@ -82,12 +91,13 @@ LIBPATHS = objects_libhare
 #	NOT auto-included here.
 SYSTEM_INCLUDE_PATHS = $(shell findpaths -e B_FIND_PATH_HEADERS_DIRECTORY private/interface) \
 	/boot/system/develop/headers/taglib \
-	$(wildcard /boot/system/develop/headers/$(shell getarch)/taglib)
+	$(wildcard /boot/system/develop/headers/$(shell getarch)/taglib) \
+	$(TAGKIT_SYSTEM_INCLUDE_PATHS)
 
 #	Additional paths paths to look for local headers. These use the form
 #	#include "header". Directories that contain the files in SRCS are
 #	automatically included.
-LOCAL_INCLUDE_PATHS = src/libHare
+LOCAL_INCLUDE_PATHS = src/libHare $(TAGKIT_LOCAL_INCLUDE_PATHS)
 
 #	Specify the level of optimization that you want. Specify either NONE (O0),
 #	SOME (O1), FULL (O2), or leave blank (for the default optimization level).
@@ -105,7 +115,13 @@ LOCALES = en
 #	use. For example, setting DEFINES to "DEBUG=1" will cause the compiler
 #	option "-DDEBUG=1" to be used. Setting DEFINES to "DEBUG" would pass
 #	"-DDEBUG" on the compiler's command line.
-DEFINES = DEBUG=1
+#	TAGKIT_CLIENT_* is how TagKit identifies Hare to MusicBrainz, the Cover Art
+#	Archive and iTunes (the same name and contact as MUSICBRAINZ_USER_AGENT in
+#	AppDefs.h); TAGKIT_USE_CATALOG makes TagKit's own words go through Hare's
+#	catalog, under the context "TagKit".
+DEFINES = DEBUG=1 TAGKIT_CLIENT_NAME=Hare TAGKIT_CLIENT_VERSION=1.2 \
+	TAGKIT_CLIENT_CONTACT=github.com/HaikuArchives/Hare \
+	TAGKIT_USE_CATALOG
 
 #	Specify the warning level. Either NONE (suppress all warnings),
 #	ALL (enable all warnings), or leave blank (enable default warnings).

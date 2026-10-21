@@ -1,0 +1,3 @@
+[submodule "src/tagkit"]
+	path = src/tagkit
+	url = https://github.com/scottmc/tagkit

@@ -32,7 +32,7 @@
 
 #include "AppDefs.h"
 #include "CommandConstants.h"
-#include "GenreList.h"
+#include "libHare/GenreList.h"
 #include "GUIStrings.h"
 
 EditorView::EditorView()

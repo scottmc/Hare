@@ -1,6 +1,13 @@
 #!/bin/sh
 
 echo "Starting Build of Hare"
+if [ ! -f src/tagkit/tagkit.mk ]; then
+	echo "Fetching TagKit (git submodule)"
+	git submodule update --init src/tagkit || {
+		echo "Couldn't fetch TagKit: run \"git submodule update --init\""
+		exit 1
+	}
+fi
 echo "Building Hare Library"
 make -f Makefile_libHare OBJ_DIR="objects_libhare" $*
 echo "Building Encoders"

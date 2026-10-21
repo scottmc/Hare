@@ -50,7 +50,7 @@
 
 #include "AEEncoder.h"
 #include "AudioAttributes.h"
-#include "GenreList.h"
+#include "libHare/GenreList.h"
 #include "MusicBrainzAttributes.h"
 
 #include "AppDefs.h"
