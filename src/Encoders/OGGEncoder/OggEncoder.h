@@ -19,13 +19,6 @@
 #define OGG "oggenc"
 #define BITRATE_PREFIX "-b"
 #define OUTPUT_PREFIX "-o"
-#define ARTIST_PREFIX "-a"
-#define ALBUM_PREFIX "-l"
-#define TITLE_PREFIX "-t"
-#define YEAR_PREFIX "-d"
-#define COMMENT_PREFIX "-c COMMENT="
-#define TRACK_PREFIX "-N"
-#define GENRE_PREFIX "-c GENRE="
 
 extern char** environ;
 

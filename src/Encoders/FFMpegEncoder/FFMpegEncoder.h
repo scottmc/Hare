@@ -26,7 +26,6 @@
 #define COMPRESSION_PREFIX "-compression_level"
 #define PROGRESS_PREFIX "-progress"
 #define PROGRESS_TARGET "pipe:2"
-#define METADATA_PREFIX "-metadata"
 
 extern char** environ;
 

@@ -66,17 +66,9 @@ OggEncoder::Encode(BMessage* message) {
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
-	//set up arg list
-	int numTags = 0;
-	if (args.artist) numTags += 2;
-	if (args.album) numTags += 2;
-	if (args.title) numTags += 2;
-	if (args.year) numTags += 2;
-	if (args.comment) numTags++;
-	if (args.track) numTags += 2;
-	if (args.genre) numTags++;
-
-	int argc = 6 + numTags;
+	//set up arg list. No tags are passed to oggenc: the application writes
+	//them to the finished file through TagKit (AppView::WriteTags()).
+	int argc = 6;
 	const char* argv[argc+1];
 
 	argv[0] = oggencPath;
@@ -84,45 +76,6 @@ OggEncoder::Encode(BMessage* message) {
 	argv[2] = args.outputFile;
 	argv[3] = BITRATE_PREFIX;
 	argv[4] = bitrate;
-
-	int i = 5;
-	if (args.artist) {
-		argv[i] = strdup(ARTIST_PREFIX);
-		argv[i+1] = strdup(args.artist);
-		i += 2;
-	}
-	if (args.album) {
-		argv[i] = strdup(ALBUM_PREFIX);
-		argv[i+1] = strdup(args.album);
-		i += 2;
-	}
-	if (args.title) {
-		argv[i] = strdup(TITLE_PREFIX);
-		argv[i+1] = strdup(args.title);
-		i += 2;
-	}
-	if (args.year) {
-		argv[i] = strdup(YEAR_PREFIX);
-		argv[i+1] = strdup(args.year);
-		i += 2;
-	}
-	if (args.comment) {
-		BString comment = COMMENT_PREFIX;
-		comment << args.comment;
-		argv[i] = strdup(comment.String());
-		i++;
-	}
-	if (args.track) {
-		argv[i] = strdup(TRACK_PREFIX);
-		argv[i+1] = strdup(args.track);
-		i += 2;
-	}
-	if (args.genre) {
-		BString genre = GENRE_PREFIX;
-		genre << args.genre;
-		argv[i] = strdup(genre.String());
-		i++;
-	}
 
 	argv[argc-1] = args.inputFile;
 	argv[argc] = NULL;
@@ -139,10 +92,6 @@ OggEncoder::Encode(BMessage* message) {
 	FILE* out;
 	int filedes[2];
 	thread_id oggenc = CommandIO(filedes, argc, argv);
-
-	for (int k = 5; k < 5 + numTags; k++) {
-		free((void*)argv[k]);
-	}
 
 	if (oggenc <= B_ERROR) {
 		PRINT(("ERROR: can't load oggenc image\n"));

@@ -22,7 +22,6 @@
 #include <string.h>
 
 #include "AudioAttributes.h"
-#include "ID3Tags.h"
 
 #include "BeEncoder.h"
 #include "MediaMenuItem.h"
@@ -450,22 +449,10 @@ BeEncoder::WriteDetails(BMessage* msg, const char* mime, bool tags) {
 		}
 	}
 
-	if (tags) {
-		ID3Tags id3Tags(outputFile);
-		id3Tags.SetArtist(artist);
-		id3Tags.SetAlbum(album);
-		id3Tags.SetTitle(title);
-		id3Tags.SetYear(year);
-		id3Tags.SetComment(comment);
-		id3Tags.SetTrack(track);
-		id3Tags.SetGenre(genre);
+	// The ID3 tags themselves (the 'tags' argument is no longer used) are
+	// written afterwards, by the application, through TagKit - see
+	// AppView::WriteTags().
 
-		if (id3Tags.Write() != B_OK) {
-			PRINT(("Error writing id3 tags.\n"));
-			return B_ERROR;
-		}
-	}
-	
 	return B_OK;
 }
 

@@ -20,7 +20,6 @@
 #include <Debug.h>
 
 #include "AudioAttributes.h"
-#include "ID3Tags.h"
 
 #include "MP3Lame.h"
 
@@ -574,17 +573,8 @@ MP3Lame::WriteDetails(BMessage* message) {
 		}
 	}
 
-	ID3Tags tags(outputFile);
-	tags.SetArtist(artist);
-	tags.SetAlbum(album);
-	tags.SetTitle(title);
-	tags.SetYear(year);
-	tags.SetComment(comment);
-	tags.SetTrack(track);
-	tags.SetGenre(genre);
-	if (tags.Write() != B_OK) {
-		status = B_ERROR;
-	}
+	// The ID3 tags themselves (and cover art) are written afterwards, by
+	// the application, through TagKit - see AppView::WriteTags().
 
 	return status;
 }

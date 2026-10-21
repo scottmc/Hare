@@ -76,6 +76,8 @@
 #define FILES_EXIST_MORE_PREFIX_TXT B_TRANSLATE_CONTEXT("...and ", "GUIStrings")
 #define FILES_EXIST_MORE_SUFFIX_TXT B_TRANSLATE_CONTEXT(" more", "GUIStrings")
 #define FILES_EXIST_QUESTION_TXT B_TRANSLATE_CONTEXT("Encoding again will overwrite them. Rip and encode anyway?", "GUIStrings")
+#define TAG_WRITE_FAILED_PREFIX_TXT B_TRANSLATE_CONTEXT("The tracks were encoded, but the tags (and cover art) couldn't be written to ", "GUIStrings")
+#define TAG_WRITE_FAILED_MIDDLE_TXT B_TRANSLATE_CONTEXT(" of them.", "GUIStrings")
 
 #define ENCODER_EXE_NOT_FOUND_INIT_TXT B_TRANSLATE_CONTEXT("The addon could not find the required executable.", "EncoderExeNotFoundInit")
 #define ENCODER_EXE_NOT_FOUND_INIT_DOC_TXT B_TRANSLATE_CONTEXT("Please check the addon's documentation.\n", "EncoderExeNotFoundInitDoc")

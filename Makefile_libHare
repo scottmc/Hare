@@ -32,9 +32,7 @@ SRCS = src/libHare/AEEncoder.cpp \
 	   src/libHare/AudioAttribute.cpp \
 	   src/libHare/AudioAttributes.cpp \
 	   src/libHare/AudioInfo.cpp \
-	   src/libHare/GenreList.cpp \
-	   src/libHare/ID3Tag.cpp \
-	   src/libHare/ID3Tags.cpp
+	   src/libHare/GenreList.cpp
 
 #	Specify the resource definition files to use. Full or relative paths can be
 #	used.

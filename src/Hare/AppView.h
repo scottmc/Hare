@@ -83,14 +83,15 @@ private:
 	static int32 EncodeThread(void* args);
 	void WriteCoverArt(const BPath& directory, const void* data, size_t size,
 		const BString& extension);
-	void WriteTags(const BPath& outputPath, const BString& artist,
+	bool WriteTags(const BPath& outputPath, const BString& artist,
 		const BString& album, const BString& title, const BString& year,
 		const BString& comment, int32 trackNumber, const BString& genre,
 		const void* coverData, size_t coverSize,
 		const BString& coverExtension, const BString& discId,
 		const BString& releaseId, const BString& releaseGroupId,
 		const BString& artistId,
-		const BObjectList<TrackMBMetadata, true>* trackMetadata);
+		const BObjectList<TrackMBMetadata, true>* trackMetadata,
+		BString* errorMessage = NULL);
 	void WriteMusicBrainzMetadata(const BPath& outputPath, int32 trackNumber,
 		const BString& discId, const BString& releaseId,
 		const BString& releaseGroupId, const BString& artistId,

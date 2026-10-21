@@ -1837,6 +1837,11 @@ AppView::EncodeThread(void* args)
 		view->UnlockLooper();
 	}
 
+	// Tracks whose tags TagKit couldn't write after encoding (the audio
+	// itself is fine); reported once at the end of the run.
+	int32 tagFailures = 0;
+	BString firstTagError;
+
 	BObjectList<BRefRow> objList;
 	BRefRow* row;
 	BBitmapField* tmpBitmapField;
@@ -2374,11 +2379,17 @@ AppView::EncodeThread(void* args)
 				coverArt.Extension());
 		}
 
-		view->WriteTags(outputPath, artist, album, title, year, comment,
-			haveTrack ? atol(track.String()) : 0, genre,
-			coverArt.Data(), coverArt.Size(), coverArt.Extension(),
-			mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
-			&mbTrackMetadata);
+		BString tagError;
+		if (!view->WriteTags(outputPath, artist, album, title, year, comment,
+				haveTrack ? atol(track.String()) : 0, genre,
+				coverArt.Data(), coverArt.Size(), coverArt.Extension(),
+				mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
+				&mbTrackMetadata, &tagError)) {
+			if (tagFailures == 0) {
+				firstTagError = tagError;
+			}
+			tagFailures++;
+		}
 
 		view->WriteMusicBrainzMetadata(outputPath,
 			haveTrack ? atol(track.String()) : 0,
@@ -2403,6 +2414,16 @@ AppView::EncodeThread(void* args)
 	}
 
 	system_beep(SYSTEM_BEEP_ENCODING_DONE);
+
+	if (tagFailures > 0) {
+		BString msg(TAG_WRITE_FAILED_PREFIX_TXT);
+		msg << tagFailures << TAG_WRITE_FAILED_MIDDLE_TXT;
+		if (firstTagError.Length() > 0) {
+			msg << "\n\n" << firstTagError;
+		}
+		view->AlertUser(msg.String());
+	}
+
 	return B_OK;
 }
 
@@ -2561,16 +2582,18 @@ AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,
 
 // Writes the finished track's tags - the usual text fields, the cover art
 // and (when a MusicBrainz lookup found this disc) its MusicBrainz ids -
-// into the output file in one go, through TagKit. Failures are only
-// logged: the encoded audio itself is fine either way.
-void
+// into the output file in one go, through TagKit. A failure doesn't affect
+// the encoded audio, so it's only reported back (false, with the reason in
+// errorMessage); the caller collects them and tells the user at the end.
+bool
 AppView::WriteTags(const BPath& outputPath, const BString& artist,
 	const BString& album, const BString& title, const BString& year,
 	const BString& comment, int32 trackNumber, const BString& genre,
 	const void* coverData, size_t coverSize, const BString& coverExtension,
 	const BString& discId, const BString& releaseId,
 	const BString& releaseGroupId, const BString& artistId,
-	const BObjectList<TrackMBMetadata, true>* trackMetadata)
+	const BObjectList<TrackMBMetadata, true>* trackMetadata,
+	BString* errorMessage)
 {
 	PRINT(("AppView::WriteTags(const BPath&, ...)\n"));
 
@@ -2621,11 +2644,17 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 		}
 	}
 
-	BString errorMessage;
-	if (!tagkit::write_tags(record, &errorMessage)) {
+	BString writeError;
+	if (!tagkit::write_tags(record, &writeError)) {
 		PRINT(("AppView::WriteTags: couldn't write tags to %s: %s\n",
-			outputPath.Path(), errorMessage.String()));
+			outputPath.Path(), writeError.String()));
+		if (errorMessage) {
+			*errorMessage = writeError;
+		}
+		return false;
 	}
+
+	return true;
 }
 
 void

@@ -66,22 +66,10 @@ FFMpegEncoder::Encode(BMessage* message) {
 		return FSS_INPUT_NOT_SUPPORTED;
 	}
 
-	//set up arg list -- every optional tag uses two argv slots:
-	//"-metadata" followed by "key=value". Two separate slots (rather than
-	//one combined string) matter here: argv entries are passed straight to
-	//the new process with no shell in between, so a single argv element
-	//containing an embedded space is never re-split into two arguments.
-	int numTags = 0;
-	if (args.artist) numTags += 2;
-	if (args.album) numTags += 2;
-	if (args.title) numTags += 2;
-	if (args.year) numTags += 2;
-	if (args.comment) numTags += 2;
-	if (args.track) numTags += 2;
-	if (args.genre) numTags += 2;
-
+	//set up arg list. No tags are passed to ffmpeg: the application writes
+	//them to the finished file through TagKit (AppView::WriteTags()).
 	const int fixedCount = 12;
-	int argc = fixedCount + numTags + 1; //+1 for outputFile
+	int argc = fixedCount + 1; //+1 for outputFile
 	const char* argv[argc+1]; //+1 for NULL terminator
 
 	argv[0] = ffmpegPath;
@@ -96,57 +84,6 @@ FFMpegEncoder::Encode(BMessage* message) {
 	argv[9] = level;
 	argv[10] = PROGRESS_PREFIX;
 	argv[11] = PROGRESS_TARGET;
-
-	int i = fixedCount;
-	if (args.artist) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "artist=";
-		kv << args.artist;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
-	if (args.album) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "album=";
-		kv << args.album;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
-	if (args.title) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "title=";
-		kv << args.title;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
-	if (args.year) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "date=";
-		kv << args.year;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
-	if (args.comment) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "comment=";
-		kv << args.comment;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
-	if (args.track) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "track=";
-		kv << args.track;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
-	if (args.genre) {
-		argv[i] = strdup(METADATA_PREFIX);
-		BString kv = "genre=";
-		kv << args.genre;
-		argv[i+1] = strdup(kv.String());
-		i += 2;
-	}
 
 	argv[argc-1] = args.outputFile;
 	argv[argc] = NULL;
@@ -163,10 +100,6 @@ FFMpegEncoder::Encode(BMessage* message) {
 	FILE* out;
 	int filedes[2];
 	thread_id ffmpeg = CommandIO(filedes, argc, argv);
-
-	for (int k = fixedCount; k < fixedCount + numTags; k++) {
-		free((void*)argv[k]);
-	}
 
 	if (ffmpeg <= B_ERROR) {
 		PRINT(("ERROR: can't load ffmpeg image\n"));
