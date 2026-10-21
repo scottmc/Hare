@@ -77,6 +77,7 @@ private:
 	static int32 RemoveItemsFromList(void* args);
 	void Encode();
 	void CheckDiskSpace();
+	bool ConfirmOverwrite();
 	void Cancel();
 	void AlertUser(const char* message);
 	static int32 EncodeThread(void* args);

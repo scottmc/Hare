@@ -1644,6 +1644,72 @@ AppView::CheckDiskSpace()
 	fLastCheckedFreeBytes = freeBytes;
 }
 
+// Looks at the output file of every track that's about to be encoded
+// (the selected ones, or all of them when none or all are selected - the
+// same rule EncodeThread() uses) and, if any of those files already
+// exist - typically because the run that just finished is being started
+// again by pressing Encode a second time - asks the user whether to go
+// ahead and overwrite them. Returns true when encoding should proceed.
+bool
+AppView::ConfirmOverwrite()
+{
+	PRINT(("AppView::ConfirmOverwrite()\n"));
+
+	int32 numRows = listView->CountRows();
+	int32 numSelected = 0;
+	for (int i = 0; i < numRows; i++) {
+		if (listView->RowAt(i)->IsSelected()) {
+			numSelected++;
+		}
+	}
+	bool all = ((numSelected == 0) || (numSelected == numRows));
+
+	const int32 kMaxNamesShown = 5;
+	int32 existing = 0;
+	BString names;
+	for (int i = 0; i < numRows; i++) {
+		BRefRow* row = (BRefRow*)listView->RowAt(i);
+		if (!all && !row->IsSelected()) {
+			continue;
+		}
+		BStringField* outputField
+			= (BStringField*)row->GetField(SAVE_AS_COLUMN_INDEX);
+		if (!outputField || !outputField->String()) {
+			continue;
+		}
+		BEntry entry(outputField->String());
+		if ((entry.InitCheck() != B_OK) || !entry.IsFile()) {
+			continue;
+		}
+		if (existing < kMaxNamesShown) {
+			char leaf[B_FILE_NAME_LENGTH];
+			if (entry.GetName(leaf) == B_OK) {
+				names << "\n" << leaf;
+			}
+		}
+		existing++;
+	}
+
+	if (existing == 0) {
+		return true;
+	}
+
+	BString msg(FILES_EXIST_PREFIX_TXT);
+	msg << "\n" << names;
+	if (existing > kMaxNamesShown) {
+		msg << "\n" << FILES_EXIST_MORE_PREFIX_TXT
+			<< (existing - kMaxNamesShown) << FILES_EXIST_MORE_SUFFIX_TXT;
+	}
+	msg << "\n\n" << FILES_EXIST_QUESTION_TXT;
+
+	// Same Yes/No pairing as the "input not supported" question in
+	// EncodeThread(): button 0 is Yes, button 1 is No, and Escape means No.
+	BAlert* alert = new BAlert("alert", msg.String(), YES, NO, NULL,
+		B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+	alert->SetShortcut(1, B_ESCAPE);
+	return (alert->Go() == 0);
+}
+
 void
 AppView::Encode()
 {
@@ -1655,6 +1721,13 @@ AppView::Encode()
 	// EncodeThread() only ever snapshots those once, right at the
 	// start of the run.
 	if (fMusicBrainzLookupsPending > 0) {
+		return;
+	}
+
+	// Pressing Encode again after a run has finished (the files stay
+	// selected and the button is enabled again) would otherwise quietly
+	// redo everything - ask first when the output files are already there.
+	if (!ConfirmOverwrite()) {
 		return;
 	}
 

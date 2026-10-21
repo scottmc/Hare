@@ -72,6 +72,10 @@
 #define LOW_DISK_SPACE_PREFIX_TXT B_TRANSLATE_CONTEXT("Low disk space: only about ", "GUIStrings")
 #define LOW_DISK_SPACE_MIDDLE_TXT B_TRANSLATE_CONTEXT(" MB free on the destination volume, but this encode run may need roughly ", "GUIStrings")
 #define LOW_DISK_SPACE_SUFFIX_TXT B_TRANSLATE_CONTEXT(" MB.\n\nYou can close this and continue if you like - this is just a warning.", "GUIStrings")
+#define FILES_EXIST_PREFIX_TXT B_TRANSLATE_CONTEXT("Some of the files to be encoded already exist:", "GUIStrings")
+#define FILES_EXIST_MORE_PREFIX_TXT B_TRANSLATE_CONTEXT("...and ", "GUIStrings")
+#define FILES_EXIST_MORE_SUFFIX_TXT B_TRANSLATE_CONTEXT(" more", "GUIStrings")
+#define FILES_EXIST_QUESTION_TXT B_TRANSLATE_CONTEXT("Encoding again will overwrite them. Rip and encode anyway?", "GUIStrings")
 
 #define ENCODER_EXE_NOT_FOUND_INIT_TXT B_TRANSLATE_CONTEXT("The addon could not find the required executable.", "EncoderExeNotFoundInit")
 #define ENCODER_EXE_NOT_FOUND_INIT_DOC_TXT B_TRANSLATE_CONTEXT("Please check the addon's documentation.\n", "EncoderExeNotFoundInitDoc")
