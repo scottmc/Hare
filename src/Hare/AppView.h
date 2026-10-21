@@ -46,7 +46,7 @@ struct TrackMBMetadata {
 // is owned separately, by whichever of coverArtView/coverArtCandidatesView
 // is currently displaying it (see MessageReceived()'s COVER_ART_FOUND
 // case) - this struct only needs the original bytes, for WriteCoverArt()/
-// WriteCoverArtTag() to write out later.
+// WriteTags() to write out later.
 struct CoverArtCandidate {
 	CoverArtCandidate() : data(NULL), size(0) {}
 	~CoverArtCandidate() { delete[] data; }
@@ -83,8 +83,14 @@ private:
 	static int32 EncodeThread(void* args);
 	void WriteCoverArt(const BPath& directory, const void* data, size_t size,
 		const BString& extension);
-	void WriteCoverArtTag(const BPath& outputPath, const void* data,
-		size_t size, const BString& extension);
+	void WriteTags(const BPath& outputPath, const BString& artist,
+		const BString& album, const BString& title, const BString& year,
+		const BString& comment, int32 trackNumber, const BString& genre,
+		const void* coverData, size_t coverSize,
+		const BString& coverExtension, const BString& discId,
+		const BString& releaseId, const BString& releaseGroupId,
+		const BString& artistId,
+		const BObjectList<TrackMBMetadata, true>* trackMetadata);
 	void WriteMusicBrainzMetadata(const BPath& outputPath, int32 trackNumber,
 		const BString& discId, const BString& releaseId,
 		const BString& releaseGroupId, const BString& artistId,

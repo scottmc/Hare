@@ -42,15 +42,14 @@
 #include <ColumnListView.h>
 #include <ColumnTypes.h>
 
-#include <fileref.h>
-#include <tag.h>
-#include <tpropertymap.h>
-#include <tstringlist.h>
-#include <tvariant.h>
+#include <memory>
 
 #include "AEEncoder.h"
 #include "AudioAttributes.h"
 #include "libHare/GenreList.h"
+#include "tagkit/CoverArtImage.h"
+#include "tagkit/TagRecord.h"
+#include "tagkit/TagWriter.h"
 #include "MusicBrainzAttributes.h"
 
 #include "AppDefs.h"
@@ -2373,9 +2372,13 @@ AppView::EncodeThread(void* args)
 		if (coverArt.HasData()) {
 			view->WriteCoverArt(outputParent, coverArt.Data(), coverArt.Size(),
 				coverArt.Extension());
-			view->WriteCoverArtTag(outputPath, coverArt.Data(), coverArt.Size(),
-				coverArt.Extension());
 		}
+
+		view->WriteTags(outputPath, artist, album, title, year, comment,
+			haveTrack ? atol(track.String()) : 0, genre,
+			coverArt.Data(), coverArt.Size(), coverArt.Extension(),
+			mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
+			&mbTrackMetadata);
 
 		view->WriteMusicBrainzMetadata(outputPath,
 			haveTrack ? atol(track.String()) : 0,
@@ -2556,55 +2559,72 @@ AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,
 	file.Write(data, size);
 }
 
+// Writes the finished track's tags - the usual text fields, the cover art
+// and (when a MusicBrainz lookup found this disc) its MusicBrainz ids -
+// into the output file in one go, through TagKit. Failures are only
+// logged: the encoded audio itself is fine either way.
 void
-AppView::WriteCoverArtTag(const BPath& outputPath, const void* data,
-	size_t size, const BString& extension)
+AppView::WriteTags(const BPath& outputPath, const BString& artist,
+	const BString& album, const BString& title, const BString& year,
+	const BString& comment, int32 trackNumber, const BString& genre,
+	const void* coverData, size_t coverSize, const BString& coverExtension,
+	const BString& discId, const BString& releaseId,
+	const BString& releaseGroupId, const BString& artistId,
+	const BObjectList<TrackMBMetadata, true>* trackMetadata)
 {
-	PRINT(("AppView::WriteCoverArtTag(const BPath&, const void*, size_t, "
-		"const BString&)\n"));
+	PRINT(("AppView::WriteTags(const BPath&, ...)\n"));
 
-	if (!data || (size == 0)) {
-		return;
+	tagkit::TagRecord record;
+	record.path = outputPath.Path();
+	record.fileName = outputPath.Leaf();
+	record.artist = artist;
+	record.album = album;
+	record.title = title;
+	record.comment = comment;
+	record.genre = genre;
+	record.track = (trackNumber > 0) ? trackNumber : 0;
+	int32 yearNumber = atol(year.String());
+	record.year = (yearNumber > 0) ? yearNumber : 0;
+
+	if (coverData && (coverSize > 0)) {
+		std::shared_ptr<tagkit::CoverArtImage> image(new tagkit::CoverArtImage);
+		const unsigned char* bytes = (const unsigned char*)coverData;
+		image->data.assign(bytes, bytes + coverSize);
+		image->mimeType = tagkit::detect_image_mime_type(bytes, coverSize);
+		if (image->mimeType.Length() == 0) {
+			image->mimeType = "image/jpeg";
+			if (coverExtension == "png") {
+				image->mimeType = "image/png";
+			} else if (coverExtension == "gif") {
+				image->mimeType = "image/gif";
+			}
+		}
+		record.newCoverArt = image;
 	}
 
-	BString mimeType("image/jpeg");
-	if (extension == "png") {
-		mimeType = "image/png";
-	} else if (extension == "gif") {
-		mimeType = "image/gif";
+	if (discId.Length() > 0) {
+		// Same rule as before: no disc ID means the lookup found nothing
+		// (or is gated off, see ENABLE_MUSICBRAINZ_LOOKUP in AppDefs.h), so
+		// none of the ids are written.
+		record.musicBrainz.discId = discId;
+		record.musicBrainz.releaseId = releaseId;
+		record.musicBrainz.releaseGroupId = releaseGroupId;
+		record.musicBrainz.artistId = artistId;
+		if (trackMetadata) {
+			for (int32 i = 0; i < trackMetadata->CountItems(); i++) {
+				TrackMBMetadata* track = trackMetadata->ItemAt(i);
+				if (track && (track->number == trackNumber)) {
+					record.musicBrainz.recordingId = track->recordingId;
+					break;
+				}
+			}
+		}
 	}
 
-	// TagLib's format-agnostic "PICTURE" complex property (TagLib 2.0+)
-	// covers ID3v2 APIC frames for MP3, FLAC's native
-	// METADATA_BLOCK_PICTURE, and Ogg Vorbis's base64 picture comment, all
-	// through the same call - no per-format branching needed, the same
-	// way MusicBrainz's plain text tags above avoid it via PropertyMap.
-	TagLib::FileRef fileRef(outputPath.Path());
-	if (fileRef.isNull() || !fileRef.file()) {
-		PRINT(("AppView::WriteCoverArtTag: TagLib couldn't open %s\n",
-			outputPath.Path()));
-		return;
-	}
-
-	TagLib::VariantMap picture;
-	picture.insert("data", TagLib::ByteVector((const char*)data,
-		(unsigned int)size));
-	picture.insert("mimeType", TagLib::String(mimeType.String()));
-	picture.insert("description", TagLib::String("Cover"));
-	picture.insert("pictureType", TagLib::String("Front Cover"));
-
-	TagLib::List<TagLib::VariantMap> pictures;
-	pictures.append(picture);
-
-	if (!fileRef.file()->setComplexProperties("PICTURE", pictures)) {
-		PRINT(("AppView::WriteCoverArtTag: setComplexProperties failed for "
-			"%s\n", outputPath.Path()));
-		return;
-	}
-
-	if (!fileRef.save()) {
-		PRINT(("AppView::WriteCoverArtTag: TagLib save failed for %s\n",
-			outputPath.Path()));
+	BString errorMessage;
+	if (!tagkit::write_tags(record, &errorMessage)) {
+		PRINT(("AppView::WriteTags: couldn't write tags to %s: %s\n",
+			outputPath.Path(), errorMessage.String()));
 	}
 }
 
@@ -2654,45 +2674,6 @@ AppView::WriteMusicBrainzMetadata(const BPath& outputPath, int32 trackNumber,
 	} else {
 		PRINT(("AppView::WriteMusicBrainzMetadata: couldn't open %s for "
 			"attribute writing\n", outputPath.Path()));
-	}
-
-	// The same five values, embedded as tags. TagLib::File::properties()/
-	// setProperties() (the PropertyMap API) maps an arbitrary key like
-	// "MUSICBRAINZ_DISCID" to an ID3v2 TXXX frame for MP3, or to a
-	// same-named Vorbis comment field for OGG/FLAC - one code path for
-	// all three formats. These are the same tag names MusicBrainz Picard
-	// itself writes, so a file Hare tags here reads back the same way in
-	// Picard (which recognizes MUSICBRAINZ_TRACKID on import and treats
-	// the file as already matched) or any other MusicBrainz-aware tool.
-	TagLib::FileRef fileRef(outputPath.Path());
-	if (!fileRef.isNull() && fileRef.file()) {
-		TagLib::PropertyMap properties = fileRef.file()->properties();
-		properties.replace("MUSICBRAINZ_DISCID",
-			TagLib::StringList(discId.String()));
-		if (releaseId.Length() > 0) {
-			properties.replace("MUSICBRAINZ_ALBUMID",
-				TagLib::StringList(releaseId.String()));
-		}
-		if (releaseGroupId.Length() > 0) {
-			properties.replace("MUSICBRAINZ_RELEASEGROUPID",
-				TagLib::StringList(releaseGroupId.String()));
-		}
-		if (artistId.Length() > 0) {
-			properties.replace("MUSICBRAINZ_ARTISTID",
-				TagLib::StringList(artistId.String()));
-		}
-		if (recordingId.Length() > 0) {
-			properties.replace("MUSICBRAINZ_TRACKID",
-				TagLib::StringList(recordingId.String()));
-		}
-		fileRef.file()->setProperties(properties);
-		if (!fileRef.save()) {
-			PRINT(("AppView::WriteMusicBrainzMetadata: TagLib save "
-				"failed for %s\n", outputPath.Path()));
-		}
-	} else {
-		PRINT(("AppView::WriteMusicBrainzMetadata: TagLib couldn't open "
-			"%s\n", outputPath.Path()));
 	}
 }
 
