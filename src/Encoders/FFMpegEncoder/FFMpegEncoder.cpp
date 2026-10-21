@@ -19,8 +19,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "AudioAttributes.h"
-
 #include "FFMpegEncoder.h"
 
 FFMpegEncoder::FFMpegEncoder() : AEEncoder(FFMPEG_ADDON_NAME_TXT) {
@@ -381,20 +379,6 @@ FFMpegEncoder::WriteDetails(argument* args) {
 			return B_ERROR;
 		}
 		if (info.SetType(FLAC_MIME_TYPE) != B_OK) {
-			return B_ERROR;
-		}
-	}
-
-	if (volume.KnowsAttr()) {
-		AudioAttributes attributes(&flacFile);
-		attributes.SetArtist(args->artist);
-		attributes.SetAlbum(args->album);
-		attributes.SetTitle(args->title);
-		attributes.SetYear(args->year);
-		attributes.SetComment(args->comment);
-		attributes.SetTrack(args->track);
-		attributes.SetGenre(args->genre);
-		if (attributes.Write() != B_OK) {
 			return B_ERROR;
 		}
 	}

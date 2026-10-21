@@ -38,7 +38,6 @@ SRCS = \
 	 src/Hare/CoverArtView.cpp \
 	 src/Hare/EditorView.cpp  \
 	 src/Hare/EncoderListView.cpp  \
-	 src/Hare/MusicBrainzAttributes.cpp \
 	 src/Hare/MusicBrainzLookup.cpp \
 	 src/Hare/PrefWindow.cpp  \
 	 src/Hare/RefRow.cpp  \

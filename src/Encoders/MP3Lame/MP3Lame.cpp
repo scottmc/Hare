@@ -19,8 +19,6 @@
 #include <Volume.h>
 #include <Debug.h>
 
-#include "AudioAttributes.h"
-
 #include "MP3Lame.h"
 
 MP3Lame::MP3Lame() : AEEncoder(LAME_ADDON_NAME_TXT) {
@@ -555,20 +553,6 @@ MP3Lame::WriteDetails(BMessage* message) {
 			return B_ERROR;
 		}
 		if (info.SetType(MP3_MIME_TYPE) != B_OK) {
-			status = B_ERROR;
-		}
-	}
-
-	if (volume.KnowsAttr()) {
-		AudioAttributes attributes(&mp3File);
-		attributes.SetArtist(artist);
-		attributes.SetAlbum(album);
-		attributes.SetTitle(title);
-		attributes.SetYear(year);
-		attributes.SetComment(comment);
-		attributes.SetTrack(track);
-		attributes.SetGenre(genre);
-		if (attributes.Write() != B_OK) {
 			status = B_ERROR;
 		}
 	}

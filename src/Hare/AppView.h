@@ -92,10 +92,6 @@ private:
 		const BString& artistId,
 		const BObjectList<TrackMBMetadata, true>* trackMetadata,
 		BString* errorMessage = NULL);
-	void WriteMusicBrainzMetadata(const BPath& outputPath, int32 trackNumber,
-		const BString& discId, const BString& releaseId,
-		const BString& releaseGroupId, const BString& artistId,
-		const BObjectList<TrackMBMetadata, true>* trackMetadata);
 	void ClearCoverArtCandidates();
 	// Picks which of statusBoxView's two cards (statusBar, the normal
 	// progress display, or barberPoleView, the indeterminate one) should

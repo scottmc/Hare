@@ -19,8 +19,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "AudioAttributes.h"
-
 #include "OggEncoder.h"
 
 OggEncoder::OggEncoder() : AEEncoder(OGG_ADDON_NAME_TXT) {
@@ -338,20 +336,6 @@ OggEncoder::WriteDetails(argument* args) {
 			return B_ERROR;
 		}
 		if (info.SetType(OGG_MIME_TYPE) != B_OK) {
-			return B_ERROR;
-		}
-	}
-
-	if (volume.KnowsAttr()) {
-		AudioAttributes attributes(&oggFile);
-		attributes.SetArtist(args->artist);
-		attributes.SetAlbum(args->album);
-		attributes.SetTitle(args->title);
-		attributes.SetYear(args->year);
-		attributes.SetComment(args->comment);
-		attributes.SetTrack(args->track);
-		attributes.SetGenre(args->genre);
-		if (attributes.Write() != B_OK) {
 			return B_ERROR;
 		}
 	}

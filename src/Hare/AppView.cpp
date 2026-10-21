@@ -48,9 +48,9 @@
 #include "AudioAttributes.h"
 #include "libHare/GenreList.h"
 #include "tagkit/CoverArtImage.h"
+#include "tagkit/TagAttributes.h"
 #include "tagkit/TagRecord.h"
 #include "tagkit/TagWriter.h"
-#include "MusicBrainzAttributes.h"
 
 #include "AppDefs.h"
 #include "AppWindow.h"
@@ -2390,11 +2390,6 @@ AppView::EncodeThread(void* args)
 			}
 			tagFailures++;
 		}
-
-		view->WriteMusicBrainzMetadata(outputPath,
-			haveTrack ? atol(track.String()) : 0,
-			mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
-			&mbTrackMetadata);
 	}
 
 	encoder->UninitEncoder();
@@ -2644,13 +2639,15 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 		}
 	}
 
-	PRINT(("AppView::WriteTags: %s track %d, recording id \"%s\" (%d tracks "
-		"known)\n", outputPath.Leaf(), (int)trackNumber,
-		record.musicBrainz.recordingId.String(),
-		trackMetadata ? (int)trackMetadata->CountItems() : -1));
+	// The ids go into the file's tags only if that's switched on (see
+	// AppDefs.h); the attributes below still get them either way.
+	tagkit::TagRecord tagRecord = record;
+#if !WRITE_MUSICBRAINZ_ID_TAGS
+	tagRecord.musicBrainz = tagkit::MusicBrainzIds();
+#endif
 
 	BString writeError;
-	if (!tagkit::write_tags(record, &writeError)) {
+	if (!tagkit::write_tags(tagRecord, &writeError)) {
 		PRINT(("AppView::WriteTags: couldn't write tags to %s: %s\n",
 			outputPath.Path(), writeError.String()));
 		if (errorMessage) {
@@ -2659,58 +2656,26 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 		return false;
 	}
 
+	// The same tags as Haiku attributes (what Tracker shows as columns),
+	// with the "Audio:" names Hare has always used. The encoder add-ons
+	// have set the file's MIME type by now, which TagKit needs to list the
+	// attributes as columns. This is best effort: a volume without
+	// attributes (a FAT stick, say) simply doesn't get them, and the tags
+	// themselves are already safely written.
+	tagkit::AttributeOptions attributeOptions;
+	attributeOptions.naming = tagkit::ATTRIBUTE_NAMES_AUDIO;
+#if WRITE_MUSICBRAINZ_ID_ATTRIBUTES
+	attributeOptions.musicBrainzIds = true;
+#endif
+	status_t attributeStatus = tagkit::copy_tags_to_attributes(record, NULL,
+		attributeOptions);
+	if (attributeStatus != B_OK) {
+		PRINT(("AppView::WriteTags: couldn't write attributes for %s: %s\n",
+			outputPath.Path(), strerror(attributeStatus)));
+	}
+
 	return true;
 }
-
-void
-AppView::WriteMusicBrainzMetadata(const BPath& outputPath, int32 trackNumber,
-	const BString& discId, const BString& releaseId,
-	const BString& releaseGroupId, const BString& artistId,
-	const BObjectList<TrackMBMetadata, true>* trackMetadata)
-{
-	PRINT(("AppView::WriteMusicBrainzMetadata(const BPath&, int32, "
-		"const BString&, ...)\n"));
-
-	if (discId.Length() == 0) {
-		// No MusicBrainz metadata for the currently loaded disc - either
-		// the lookup found nothing, or it's gated off (see
-		// ENABLE_MUSICBRAINZ_LOOKUP in AppDefs.h).
-		return;
-	}
-
-	BString recordingId;
-	if (trackMetadata) {
-		for (int32 i = 0; i < trackMetadata->CountItems(); i++) {
-			TrackMBMetadata* track = trackMetadata->ItemAt(i);
-			if (track && (track->number == trackNumber)) {
-				recordingId = track->recordingId;
-				break;
-			}
-		}
-	}
-
-	// Haiku attributes, via the same AudioAttribute machinery
-	// AudioAttributes already uses for the standard Audio:* ones (see
-	// MusicBrainzAttributes.h) - self-registers each attribute's MIME
-	// attr-info so Tracker's Attributes menu shows them.
-	BFile file(outputPath.Path(), B_READ_WRITE);
-	if (file.InitCheck() == B_OK) {
-		MusicBrainzAttributes attributes(&file);
-		attributes.SetDiscId(discId.String());
-		attributes.SetReleaseId(releaseId.String());
-		attributes.SetReleaseGroupId(releaseGroupId.String());
-		attributes.SetArtistId(artistId.String());
-		attributes.SetRecordingId(recordingId.String());
-		if (attributes.Write() != B_OK) {
-			PRINT(("AppView::WriteMusicBrainzMetadata: writing "
-				"attributes failed for %s\n", outputPath.Path()));
-		}
-	} else {
-		PRINT(("AppView::WriteMusicBrainzMetadata: couldn't open %s for "
-			"attribute writing\n", outputPath.Path()));
-	}
-}
-
 
 BString
 AppView::ReplaceInvalidFileChars(BString filestr, int32 swaptype)

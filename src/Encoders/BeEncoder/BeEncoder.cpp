@@ -21,8 +21,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "AudioAttributes.h"
-
 #include "BeEncoder.h"
 #include "MediaMenuItem.h"
 
@@ -429,22 +427,6 @@ BeEncoder::WriteDetails(BMessage* msg, const char* mime, bool tags) {
 
 		if (info.SetType(mime) != B_OK) {
 			PRINT(("Error setting mime type.\n"));
-			return B_ERROR;
-		}
-	}
-
-	if (vol.KnowsAttr()) {
-		AudioAttributes attributes(&beencfile);
-		attributes.SetArtist(artist);
-		attributes.SetAlbum(album);
-		attributes.SetTitle(title);
-		attributes.SetYear(year);
-		attributes.SetComment(comment);
-		attributes.SetTrack(track);
-		attributes.SetGenre(genre);
-
-		if (attributes.Write() != B_OK) {
-			PRINT(("Error writing file attributes.\n"));
 			return B_ERROR;
 		}
 	}

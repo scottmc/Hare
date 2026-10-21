@@ -26,4 +26,13 @@
 
 #define ENABLE_MUSICBRAINZ_LOOKUP 1
 
+// What gets stored with each ripped file when the MusicBrainz lookup found
+// the disc (see AppView::WriteTags()). Each can be switched off here:
+// the ids as tags in the file (MUSICBRAINZ_ALBUMID, _TRACKID, ...), and
+// the same ids as Haiku attributes (Audio:MUSICBRAINZ_ALBUMID, ...). The
+// ordinary tags and attributes (artist, album, title, ...) are always
+// written.
+#define WRITE_MUSICBRAINZ_ID_TAGS 1
+#define WRITE_MUSICBRAINZ_ID_ATTRIBUTES 1
+
 #endif
