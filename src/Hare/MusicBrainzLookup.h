@@ -26,8 +26,14 @@ public:
 	// ID. Pass NULL or "" when there's nothing usable to search with; the
 	// exact disc ID lookup is always tried first regardless, and this is
 	// only a fallback for when that comes back with nothing.
+	//
+	// trackCount is how many tracks the disc has, as far as the caller can
+	// tell (Hare counts the files on the cdda volume); 0 if unknown, in
+	// which case the count libdiscid reads from the disc's table of
+	// contents is used. It decides whether a release found by title search
+	// can supply its track list.
 	static void FetchAsync(const char* deviceName, const char* fallbackQuery,
-		BMessenger* replyTo);
+		int32 trackCount, BMessenger* replyTo);
 
 private:
 	static int32 FetchThread(void* args);

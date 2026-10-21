@@ -32,6 +32,7 @@ namespace {
 struct FetchParams {
 	BString deviceName;
 	BString fallbackQuery;
+	int32 trackCount;
 	BMessenger replyTo;
 };
 
@@ -219,7 +220,7 @@ TimedDiscIdReadSparse(DiscId* disc, const char* deviceName,
 
 void
 MusicBrainzLookup::FetchAsync(const char* deviceName, const char* fallbackQuery,
-	BMessenger* replyTo)
+	int32 trackCount, BMessenger* replyTo)
  {
 	PRINT(("MusicBrainzLookup::FetchAsync(const char*, const char*, "
 		"BMessenger*)\n"));
@@ -234,6 +235,7 @@ MusicBrainzLookup::FetchAsync(const char* deviceName, const char* fallbackQuery,
 	}
  	params->deviceName = deviceName;
 	params->fallbackQuery = fallbackQuery ? fallbackQuery : "";
+	params->trackCount = trackCount;
  	params->replyTo = *replyTo;
 
 	// Signalled here, right before the lookup actually starts, so AppView
@@ -307,6 +309,7 @@ MusicBrainzLookup::FetchThread(void* args)
 	FetchParams* params = (FetchParams*)args;
 	BString deviceName = params->deviceName;
 	BString fallbackQuery = params->fallbackQuery;
+	int32 knownTrackCount = params->trackCount;
 	BMessenger replyTo = params->replyTo;
 	delete params;
 
@@ -321,6 +324,13 @@ MusicBrainzLookup::FetchThread(void* args)
 	}
 
 	PRINT(("MusicBrainzLookup: disc ID = %s\n", discId.String()));
+
+	// The caller's count (the number of track files) wins over the one
+	// libdiscid derives from the table of contents.
+	PRINT(("MusicBrainzLookup: %d tracks by caller, %d by libdiscid\n",
+		(int)knownTrackCount, (int)trackCount));
+	if (knownTrackCount > 0)
+		trackCount = knownTrackCount;
 
 	// By disc ID if MusicBrainz knows the disc; if not, by the artist and
 	// album the volume name gives (see FetchAsync()'s fallbackQuery) - a
@@ -343,6 +353,11 @@ MusicBrainzLookup::FetchThread(void* args)
 			discId.String(), strerror(found.status)));
 		return B_ERROR;
 	}
+
+	PRINT(("MusicBrainzLookup: CD has %d tracks; release %s %s tracks "
+		"(%d in its list)\n", (int)trackCount, found.release.id.String(),
+		found.hasTracks ? "has matching" : "has no matching",
+		(int)found.release.tracks.size()));
 
 	SendMetadata(discId, found.release, found.hasTracks, replyTo);
 

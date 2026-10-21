@@ -570,8 +570,17 @@ AppWindow::AddVolumeToList(dev_t device)
 				&& (strcmp(info.fsh_name, "cdda") == 0)) {
 			char volumeName[B_FILE_NAME_LENGTH];
 			volume.GetName(volumeName);
+			// Each track of the disc is a file in the volume's root, so
+			// the number of refs is the number of tracks - more reliable
+			// than the count libdiscid works out from the table of
+			// contents, which came up one short for a 9 track disc.
+			// (CountNames() would count fields, not the refs in them.)
+			type_code refType;
+			int32 trackCount = 0;
+			if (refMsg.GetInfo("refs", &refType, &trackCount) != B_OK)
+				trackCount = 0;
 			MusicBrainzLookup::FetchAsync(info.device_name, volumeName,
-				viewMessenger);
+				trackCount, viewMessenger);
 		}
 #endif
 	}

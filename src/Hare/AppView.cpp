@@ -2644,6 +2644,11 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 		}
 	}
 
+	PRINT(("AppView::WriteTags: %s track %d, recording id \"%s\" (%d tracks "
+		"known)\n", outputPath.Leaf(), (int)trackNumber,
+		record.musicBrainz.recordingId.String(),
+		trackMetadata ? (int)trackMetadata->CountItems() : -1));
+
 	BString writeError;
 	if (!tagkit::write_tags(record, &writeError)) {
 		PRINT(("AppView::WriteTags: couldn't write tags to %s: %s\n",
