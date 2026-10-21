@@ -4,39 +4,23 @@
  */
 #include "MusicBrainzLookup.h"
 
-#include <exception>
 #include <new>
 #include <string.h>
 #include <vector>
 
 #include <Bitmap.h>
-#include <BitmapStream.h>
 #include <Debug.h>
-#include <DataIO.h>
 #include <Message.h>
 #include <Messenger.h>
 #include <OS.h>
 #include <String.h>
-#include <TranslationDefs.h>
-#include <TranslatorRoster.h>
 
 #include <discid/discid.h>
 
-#include <musicbrainz5/Query.h>
-#include <musicbrainz5/Release.h>
-#include <musicbrainz5/ReleaseList.h>
-#include <musicbrainz5/ReleaseGroup.h>
-#include <musicbrainz5/Medium.h>
-#include <musicbrainz5/MediumList.h>
-#include <musicbrainz5/Track.h>
-#include <musicbrainz5/TrackList.h>
-#include <musicbrainz5/Recording.h>
-#include <musicbrainz5/ArtistCredit.h>
-#include <musicbrainz5/NameCredit.h>
-#include <musicbrainz5/NameCreditList.h>
-#include <musicbrainz5/Artist.h>
-
-#include <coverart/CoverArt.h>
+#include "tagkit/CoverArtFetch.h"
+#include "tagkit/CoverArtImage.h"
+#include "tagkit/MusicBrainzSearch.h"
+#include "tagkit/ReleaseInfo.h"
 
 #include "AppDefs.h"
 #include "CommandConstants.h"
@@ -60,60 +44,6 @@ struct FetchParams {
 // match more than one release (different regional pressings sharing the
 // same table of contents).
 
-// Decodes compressed image bytes (JPEG/PNG/whatever the Cover Art Archive
-// handed back) into a BBitmap via Haiku's Translation Kit. Returns NULL on
-// any failure. Caller owns the returned bitmap.
-BBitmap*
-DecodeImage(const unsigned char* data, size_t size)
-{
-	BMemoryIO memoryIO(data, size);
-
-	BTranslatorRoster* roster = BTranslatorRoster::Default();
-	if (!roster) {
-		return NULL;
-	}
-
-	BBitmapStream stream;
-	status_t status = roster->Translate(&memoryIO, NULL, NULL, &stream,
-		B_TRANSLATOR_BITMAP);
-	if (status != B_OK) {
-		PRINT(("MusicBrainzLookup: image decode failed: %s\n",
-			strerror(status)));
-		return NULL;
-	}
-
-	BBitmap* bitmap = NULL;
-	stream.DetachBitmap(&bitmap);
-	return bitmap;
-}
-// Joins a CArtistCredit's name-credit list into the single display string
-// MusicBrainz itself uses for an artist credit, e.g. two collaborating
-// artists become "Artist One feat. Artist Two" rather than either name
-// alone - CNameCredit::JoinPhrase() is exactly the (often empty) separator
-// text MusicBrainz stores between one credited name and the next.
-BString
-JoinArtistCredit(MusicBrainz5::CArtistCredit* credit)
-{
-	BString result;
-
-	if (!credit || !credit->NameCreditList()) {
-		return result;
-	}
-
-	MusicBrainz5::CNameCreditList* names = credit->NameCreditList();
-	for (int i = 0; i < names->NumItems(); i++) {
-		MusicBrainz5::CNameCredit* nameCredit = names->Item(i);
-		if (!nameCredit) {
-			continue;
-		}
-		result << nameCredit->Name().c_str();
-		result << nameCredit->JoinPhrase().c_str();
-	}
-
-	return result;
-}
-
-
 void
 ParseArtistAlbum(const BString& fallbackQuery, BString& artist, BString& album)
 {
@@ -129,121 +59,69 @@ ParseArtistAlbum(const BString& fallbackQuery, BString& artist, BString& album)
 	album.Trim();
 }
 
-BString
-EscapeLuceneQuoted(const BString& text)
-{
-	BString result(text);
-	result.ReplaceAll("\\", "\\\\");
-	result.ReplaceAll("\"", "\\\"");
-	return result;
-}
+// MusicBrainz asks for no more than about one request per second. The
+// lookup below can make several in a row (disc ID, then the title search,
+// then the release itself), so this waits out the rest of that second
+// before each one after the first. (TagKit already retries once when
+// MusicBrainz says it is busy; this just avoids provoking it.)
+const bigtime_t kMusicBrainzRequestGap = 1100000;
 
-
-// The first credited artist's MBID off a CArtistCredit - good enough for
-// the single "artistId" attribute Hare writes; a release can have several
-// credited artists (JoinArtistCredit() above covers the display string for
-// all of them), but there's no widely-used convention for storing more
-// than one artist MBID as a single file attribute.
-BString
-FirstArtistId(MusicBrainz5::CArtistCredit* credit)
-{
-	BString result;
-
-	if (!credit || !credit->NameCreditList()
-			|| (credit->NameCreditList()->NumItems() == 0)) {
-		return result;
+class RequestPacer {
+public:
+	RequestPacer()
+		:
+		fLast(0)
+	{
 	}
 
-	MusicBrainz5::CNameCredit* nameCredit = credit->NameCreditList()->Item(0);
-	if (nameCredit && nameCredit->Artist()) {
-		result = nameCredit->Artist()->ID().c_str();
+	void Wait()
+	{
+		if (fLast != 0) {
+			bigtime_t elapsed = system_time() - fLast;
+			if (elapsed < kMusicBrainzRequestGap)
+				snooze(kMusicBrainzRequestGap - elapsed);
+		}
+		fLast = system_time();
 	}
 
-	return result;
-}
+private:
+	bigtime_t	fLast;
+};
 
-// Sends METADATA_FOUND for release (matched against discId via
-// CRelease::MediaMatchingDiscID(), so a multi-disc release resolves to the
-// right medium/tracklist for the actual disc that was looked up). Best
-// effort throughout - see MusicBrainzLookup.h's METADATA_FOUND
-// documentation for the message's exact contents. Doesn't throw: any
-// libmusicbrainz5 exception is caught and just means less metadata gets
-// sent, same as a field simply being blank on the release itself.
+// Sends METADATA_FOUND for release. withTracks is false for a release
+// found by title search rather than by disc ID: nothing says which of its
+// discs (if it has several) is the one in the drive, so only the
+// album-level details are sent then. Best effort throughout - see
+// MusicBrainzLookup.h's METADATA_FOUND documentation for the message's
+// exact contents.
 void
-SendMetadata(const BString& discId, MusicBrainz5::CRelease* release,
-	BMessenger& replyTo)
+SendMetadata(const BString& discId, const tagkit::ReleaseInfo& release,
+	bool withTracks, BMessenger& replyTo)
 {
-	if (!release) {
-		return;
-	}
-
 	BMessage msg(METADATA_FOUND);
 	msg.AddString("discId", discId);
-	msg.AddString("releaseId", release->ID().c_str());
-	msg.AddString("albumTitle", release->Title().c_str());
+	msg.AddString("releaseId", release.id);
+	msg.AddString("albumTitle", release.title);
+	msg.AddString("albumArtist", release.artist);
+	msg.AddString("artistId", release.artistId);
 
-	MusicBrainz5::CArtistCredit* albumCredit = release->ArtistCredit();
-	BString albumArtist = JoinArtistCredit(albumCredit);
-	msg.AddString("albumArtist", albumArtist);
-	msg.AddString("artistId", FirstArtistId(albumCredit));
+	if (release.releaseGroupId.Length() > 0)
+		msg.AddString("releaseGroupId", release.releaseGroupId);
 
-	MusicBrainz5::CReleaseGroup* releaseGroup = release->ReleaseGroup();
-	if (releaseGroup) {
-		msg.AddString("releaseGroupId", releaseGroup->ID().c_str());
-	}
-
-	BString date = release->Date().c_str();
 	BString year;
-	if (date.Length() >= 4) {
-		date.CopyInto(year, 0, 4);
-	}
+	if (release.year > 0)
+		year << release.year;
 	msg.AddString("year", year);
 
-	try {
-		MusicBrainz5::CMediumList media
-			= release->MediaMatchingDiscID(discId.String());
-		for (int m = 0; m < media.NumItems(); m++) {
-			MusicBrainz5::CMedium* medium = media.Item(m);
-			if (!medium || !medium->TrackList()) {
-				continue;
-			}
-
-			MusicBrainz5::CTrackList* tracks = medium->TrackList();
-			for (int t = 0; t < tracks->NumItems(); t++) {
-				MusicBrainz5::CTrack* track = tracks->Item(t);
-				if (!track) {
-					continue;
-				}
-
-				MusicBrainz5::CRecording* recording = track->Recording();
-
-				BString trackTitle = track->Title().c_str();
-				if ((trackTitle.Length() == 0) && recording) {
-					trackTitle = recording->Title().c_str();
-				}
-
-				MusicBrainz5::CArtistCredit* trackCredit
-					= track->ArtistCredit();
-				BString trackArtist = trackCredit
-					? JoinArtistCredit(trackCredit) : BString();
-				if (trackArtist.Length() == 0) {
-					trackArtist = albumArtist;
-				}
-
-				BString recordingId;
-				if (recording) {
-					recordingId = recording->ID().c_str();
-				}
-
-				msg.AddInt32("trackNumber", track->Position());
-				msg.AddString("trackTitle", trackTitle);
-				msg.AddString("trackArtist", trackArtist);
-				msg.AddString("recordingId", recordingId);
-			}
+	if (withTracks) {
+		for (size_t t = 0; t < release.tracks.size(); t++) {
+			const tagkit::TrackInfo& track = release.tracks[t];
+			msg.AddInt32("trackNumber", track.number);
+			msg.AddString("trackTitle", track.title);
+			msg.AddString("trackArtist", track.artist.Length() > 0
+				? track.artist : release.artist);
+			msg.AddString("recordingId", track.recordingId);
 		}
-	} catch (std::exception& ex) {
-		PRINT(("MusicBrainzLookup: reading track list failed: %s\n",
-			ex.what()));
 	}
 
 	replyTo.SendMessage(&msg);
@@ -444,15 +322,16 @@ MusicBrainzLookup::ComputeDiscID(const char* deviceName)
 	return result;
 }
 
+
 int32
 MusicBrainzLookup::FetchThread(void* args)
 {
 	PRINT(("MusicBrainzLookup::FetchThread(void*)\n"));
 
 	FetchParams* params = (FetchParams*)args;
- 	BString deviceName = params->deviceName;
+	BString deviceName = params->deviceName;
 	BString fallbackQuery = params->fallbackQuery;
- 	BMessenger replyTo = params->replyTo;
+	BMessenger replyTo = params->replyTo;
 	delete params;
 
 	LookupFinishedNotifier lookupFinished(replyTo);
@@ -466,71 +345,75 @@ MusicBrainzLookup::FetchThread(void* args)
 
 	PRINT(("MusicBrainzLookup: disc ID = %s\n", discId.String()));
 
-	MusicBrainz5::CQuery query(MUSICBRAINZ_USER_AGENT);
-	MusicBrainz5::CReleaseList candidateReleases;
+	// Track/release metadata (title, artist, per-track recording IDs, ...)
+	// always comes from the single best candidate - only the cover art
+	// itself is offered as a choice between several.
+	RequestPacer pacer;
+	tagkit::ReleaseInfo best;
+	bool haveBest = false;
+	bool bestHasTracks = false;
+	std::vector<tagkit::ReleaseRef> candidates;
 
-	try {
-		MusicBrainz5::CReleaseList releases = query.LookupDiscID(discId.String());
-
-		if (releases.NumItems() > 0) {
-			candidateReleases = releases;
-		} else {
-			PRINT(("MusicBrainzLookup: no releases found for disc ID %s\n",
-				discId.String()));
+	pacer.Wait();
+	tagkit::ReleaseLookupResult lookup
+		= tagkit::MusicBrainzSearch::LookupDiscId(discId);
+	if ((lookup.status == B_OK) && !lookup.releases.empty()) {
+		best = lookup.releases[0];
+		haveBest = true;
+		bestHasTracks = true;
+		for (size_t i = 0; i < lookup.releases.size(); i++) {
+			tagkit::ReleaseRef ref;
+			ref.id = lookup.releases[i].id;
+			ref.title = lookup.releases[i].title;
+			ref.year = lookup.releases[i].year;
+			candidates.push_back(ref);
 		}
-
-	} catch (std::exception& ex) {
-		PRINT(("MusicBrainzLookup: disc ID lookup failed: %s\n", ex.what()));
+	} else {
+		PRINT(("MusicBrainzLookup: no releases found for disc ID %s "
+			"(status %s)\n", discId.String(), strerror(lookup.status)));
 	}
 
-	// Kept alive for the rest of the function, same as candidateReleases
-	// itself below - both may end up holding pointers into this that need
-	// to outlive the try block they're captured in.
-	MusicBrainz5::CMetadata searchMetadata;
-	if (candidateReleases.NumItems() == 0) {
+	if (!haveBest) {
 		BString fallbackArtist, fallbackAlbum;
 		ParseArtistAlbum(fallbackQuery, fallbackArtist, fallbackAlbum);
 
 		if ((fallbackArtist.Length() > 0) && (fallbackAlbum.Length() > 0)) {
-			try {
-				MusicBrainz5::CQuery::tParamMap searchParams;
-				BString luceneQuery;
-				luceneQuery << "artist:\"" << EscapeLuceneQuoted(fallbackArtist)
-					<< "\" AND release:\"" << EscapeLuceneQuoted(fallbackAlbum)
-					<< "\"";
-				PRINT(("MusicBrainzLookup: falling back to title search: "
-					"%s\n", luceneQuery.String()));
-				searchParams["query"] = luceneQuery.String();
+			PRINT(("MusicBrainzLookup: falling back to title search: "
+				"%s - %s\n", fallbackArtist.String(),
+				fallbackAlbum.String()));
 
-				searchMetadata = query.Query("release", "", "", searchParams);
-				MusicBrainz5::CReleaseList* searchReleases
-					= searchMetadata.ReleaseList();
-				if (searchReleases && (searchReleases->NumItems() > 0)) {
-					candidateReleases = *searchReleases;
+			pacer.Wait();
+			candidates = tagkit::MusicBrainzSearch::SearchReleases(
+				fallbackArtist, fallbackAlbum, MAX_COVER_ART_CANDIDATES);
+
+			if (!candidates.empty()) {
+				// A search result only has an ID, title and year; look the
+				// first one up for the album artist and the rest.
+				pacer.Wait();
+				tagkit::ReleaseLookupResult release
+					= tagkit::MusicBrainzSearch::LookupRelease(
+						candidates[0].id);
+				if ((release.status == B_OK) && !release.releases.empty()) {
+					best = release.releases[0];
 				} else {
-					PRINT(("MusicBrainzLookup: title search found no "
-						"releases\n"));
+					best.id = candidates[0].id;
+					best.title = candidates[0].title;
+					best.year = candidates[0].year;
 				}
-			} catch (std::exception& ex) {
-				PRINT(("MusicBrainzLookup: title search failed: %s\n",
-					ex.what()));
+				haveBest = true;
+			} else {
+				PRINT(("MusicBrainzLookup: title search found no "
+					"releases\n"));
 			}
 		}
 	}
 
-	if (candidateReleases.NumItems() == 0) {
+	if (!haveBest)
 		return B_ERROR;
-	}
 
-	// Track/release metadata (title, artist, per-track recording IDs, ...)
-	// always comes from the single best candidate, same as before this
-	// changed to support multiple cover art candidates - only the cover
-	// art itself is offered as a choice.
-	MusicBrainz5::CRelease* release = candidateReleases.Item(0);
-	BString releaseId = release->ID().c_str();
-	SendMetadata(discId, release, replyTo);
+	SendMetadata(discId, best, bestHasTracks, replyTo);
 
-	PRINT(("MusicBrainzLookup: release ID = %s\n", releaseId.String()));
+	PRINT(("MusicBrainzLookup: release ID = %s\n", best.id.String()));
 
 	// One cover art fetch per candidate release, up to
 	// MAX_COVER_ART_CANDIDATES - each is independent, so one candidate's
@@ -540,46 +423,26 @@ MusicBrainzLookup::FetchThread(void* args)
 	// METADATA_FOUND's per-track fields for another example), so a
 	// candidate with no decodable bitmap still adds an explicit NULL
 	// "bitmap" entry to keep the two arrays in step with each other.
-	int32 candidateCount = candidateReleases.NumItems();
-	if (candidateCount > MAX_COVER_ART_CANDIDATES) {
-		candidateCount = MAX_COVER_ART_CANDIDATES;
-	}
+	if (candidates.size() > (size_t)MAX_COVER_ART_CANDIDATES)
+		candidates.resize(MAX_COVER_ART_CANDIDATES);
 
-	BMessage msg(COVER_ART_FOUND);
-	int32 foundCount = 0;
-	for (int32 i = 0; i < candidateCount; i++) {
-		MusicBrainz5::CRelease* candidate = candidateReleases.Item(i);
-		if (!candidate) {
-			continue;
-		}
-		BString candidateId = candidate->ID().c_str();
-
-		std::vector<unsigned char> imageData;
-		try {
-			CoverArtArchive::CCoverArt coverArt(MUSICBRAINZ_USER_AGENT);
-			imageData = coverArt.FetchFront(candidateId.String());
-		} catch (std::exception& ex) {
-			PRINT(("MusicBrainzLookup: cover art fetch failed for %s: "
-				"%s\n", candidateId.String(), ex.what()));
-			continue;
-		}
-
-		if (imageData.empty()) {
-			PRINT(("MusicBrainzLookup: no cover art available for "
-				"release %s\n", candidateId.String()));
-			continue;
-		}
-
-		BBitmap* bitmap = DecodeImage(&imageData[0], imageData.size());
-		msg.AddPointer("bitmap", bitmap);
-		msg.AddData("imageData", B_RAW_TYPE, &imageData[0], imageData.size());
-		foundCount++;
-	}
-
-	if (foundCount == 0) {
+	std::vector<tagkit::CoverArtImage> images
+		= tagkit::fetch_cover_art(candidates, MAX_COVER_ART_CANDIDATES);
+	if (images.empty()) {
 		PRINT(("MusicBrainzLookup: no cover art available for any "
 			"candidate release\n"));
 		return B_ERROR;
+	}
+
+	BMessage msg(COVER_ART_FOUND);
+	for (size_t i = 0; i < images.size(); i++) {
+		const tagkit::CoverArtImage& image = images[i];
+		if (image.data.empty())
+			continue;
+		BBitmap* bitmap = tagkit::decode_cover_art(image);
+		msg.AddPointer("bitmap", bitmap);
+		msg.AddData("imageData", B_RAW_TYPE, &image.data[0],
+			image.data.size());
 	}
 
 	replyTo.SendMessage(&msg);
