@@ -59,39 +59,10 @@ ParseArtistAlbum(const BString& fallbackQuery, BString& artist, BString& album)
 	album.Trim();
 }
 
-// MusicBrainz asks for no more than about one request per second. The
-// lookup below can make several in a row (disc ID, then the title search,
-// then the release itself), so this waits out the rest of that second
-// before each one after the first. (TagKit already retries once when
-// MusicBrainz says it is busy; this just avoids provoking it.)
-const bigtime_t kMusicBrainzRequestGap = 1100000;
-
-class RequestPacer {
-public:
-	RequestPacer()
-		:
-		fLast(0)
-	{
-	}
-
-	void Wait()
-	{
-		if (fLast != 0) {
-			bigtime_t elapsed = system_time() - fLast;
-			if (elapsed < kMusicBrainzRequestGap)
-				snooze(kMusicBrainzRequestGap - elapsed);
-		}
-		fLast = system_time();
-	}
-
-private:
-	bigtime_t	fLast;
-};
-
 // Sends METADATA_FOUND for release. withTracks is false for a release
-// found by title search rather than by disc ID: nothing says which of its
-// discs (if it has several) is the one in the drive, so only the
-// album-level details are sent then. Best effort throughout - see
+// found by title search whose track list doesn't clearly fit the disc in
+// the drive (see MusicBrainzSearch::LookupDisc()), so only the album-level
+// details are sent then. Best effort throughout - see
 // MusicBrainzLookup.h's METADATA_FOUND documentation for the message's
 // exact contents.
 void
@@ -284,7 +255,7 @@ MusicBrainzLookup::FetchAsync(const char* deviceName, const char* fallbackQuery,
 }
 
 BString
-MusicBrainzLookup::ComputeDiscID(const char* deviceName)
+MusicBrainzLookup::ComputeDiscID(const char* deviceName, int32* trackCount)
 {
 	PRINT(("MusicBrainzLookup::ComputeDiscID(const char*)\n"));
 
@@ -318,6 +289,11 @@ MusicBrainzLookup::ComputeDiscID(const char* deviceName)
 		result = id;
 	}
 
+	if (trackCount != NULL) {
+		*trackCount = discid_get_last_track_num(disc)
+			- discid_get_first_track_num(disc) + 1;
+	}
+
 	discid_free(disc);
 	return result;
 }
@@ -336,7 +312,8 @@ MusicBrainzLookup::FetchThread(void* args)
 
 	LookupFinishedNotifier lookupFinished(replyTo);
 
-	BString discId = ComputeDiscID(deviceName.String());
+	int32 trackCount = 0;
+	BString discId = ComputeDiscID(deviceName.String(), &trackCount);
 	if (discId.Length() == 0) {
 		PRINT(("MusicBrainzLookup: could not compute a disc ID for %s\n",
 			deviceName.String()));
@@ -345,75 +322,35 @@ MusicBrainzLookup::FetchThread(void* args)
 
 	PRINT(("MusicBrainzLookup: disc ID = %s\n", discId.String()));
 
-	// Track/release metadata (title, artist, per-track recording IDs, ...)
-	// always comes from the single best candidate - only the cover art
-	// itself is offered as a choice between several.
-	RequestPacer pacer;
-	tagkit::ReleaseInfo best;
-	bool haveBest = false;
-	bool bestHasTracks = false;
-	std::vector<tagkit::ReleaseRef> candidates;
-
-	pacer.Wait();
-	tagkit::ReleaseLookupResult lookup
-		= tagkit::MusicBrainzSearch::LookupDiscId(discId);
-	if ((lookup.status == B_OK) && !lookup.releases.empty()) {
-		best = lookup.releases[0];
-		haveBest = true;
-		bestHasTracks = true;
-		for (size_t i = 0; i < lookup.releases.size(); i++) {
-			tagkit::ReleaseRef ref;
-			ref.id = lookup.releases[i].id;
-			ref.title = lookup.releases[i].title;
-			ref.year = lookup.releases[i].year;
-			candidates.push_back(ref);
-		}
-	} else {
-		PRINT(("MusicBrainzLookup: no releases found for disc ID %s "
-			"(status %s)\n", discId.String(), strerror(lookup.status)));
+	// By disc ID if MusicBrainz knows the disc; if not, by the artist and
+	// album the volume name gives (see FetchAsync()'s fallbackQuery) - a
+	// release found that way lends its track list only when it clearly
+	// fits the disc. Track/release metadata (title, artist, per-track
+	// recording IDs, ...) always comes from the single best release; only
+	// the cover art is offered as a choice between several.
+	BString fallbackArtist, fallbackAlbum;
+	ParseArtistAlbum(fallbackQuery, fallbackArtist, fallbackAlbum);
+	if ((fallbackArtist.Length() == 0) || (fallbackAlbum.Length() == 0)) {
+		fallbackArtist = "";
+		fallbackAlbum = "";
 	}
 
-	if (!haveBest) {
-		BString fallbackArtist, fallbackAlbum;
-		ParseArtistAlbum(fallbackQuery, fallbackArtist, fallbackAlbum);
-
-		if ((fallbackArtist.Length() > 0) && (fallbackAlbum.Length() > 0)) {
-			PRINT(("MusicBrainzLookup: falling back to title search: "
-				"%s - %s\n", fallbackArtist.String(),
-				fallbackAlbum.String()));
-
-			pacer.Wait();
-			candidates = tagkit::MusicBrainzSearch::SearchReleases(
-				fallbackArtist, fallbackAlbum, MAX_COVER_ART_CANDIDATES);
-
-			if (!candidates.empty()) {
-				// A search result only has an ID, title and year; look the
-				// first one up for the album artist and the rest.
-				pacer.Wait();
-				tagkit::ReleaseLookupResult release
-					= tagkit::MusicBrainzSearch::LookupRelease(
-						candidates[0].id);
-				if ((release.status == B_OK) && !release.releases.empty()) {
-					best = release.releases[0];
-				} else {
-					best.id = candidates[0].id;
-					best.title = candidates[0].title;
-					best.year = candidates[0].year;
-				}
-				haveBest = true;
-			} else {
-				PRINT(("MusicBrainzLookup: title search found no "
-					"releases\n"));
-			}
-		}
-	}
-
-	if (!haveBest)
+	tagkit::DiscLookupResult found = tagkit::MusicBrainzSearch::LookupDisc(
+		discId, trackCount, fallbackArtist, fallbackAlbum,
+		MAX_COVER_ART_CANDIDATES);
+	if (found.status != B_OK) {
+		PRINT(("MusicBrainzLookup: no release found for disc ID %s (%s)\n",
+			discId.String(), strerror(found.status)));
 		return B_ERROR;
+	}
 
-	SendMetadata(discId, best, bestHasTracks, replyTo);
+	SendMetadata(discId, found.release, found.hasTracks, replyTo);
 
-	PRINT(("MusicBrainzLookup: release ID = %s\n", best.id.String()));
+	PRINT(("MusicBrainzLookup: release ID = %s (%s)\n",
+		found.release.id.String(),
+		found.foundByDiscId ? "by disc ID" : "by title search"));
+
+	std::vector<tagkit::ReleaseRef> candidates = found.candidates;
 
 	// One cover art fetch per candidate release, up to
 	// MAX_COVER_ART_CANDIDATES - each is independent, so one candidate's

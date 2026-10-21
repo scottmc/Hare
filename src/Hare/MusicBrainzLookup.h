@@ -31,7 +31,10 @@ public:
 
 private:
 	static int32 FetchThread(void* args);
-	static BString ComputeDiscID(const char* deviceName);
+	// trackCount, when given, receives how many tracks the disc has (0 if
+	// unknown).
+	static BString ComputeDiscID(const char* deviceName,
+		int32* trackCount = NULL);
 };
 
 #endif
