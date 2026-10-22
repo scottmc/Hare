@@ -53,8 +53,10 @@
 #include "libHare/GenreList.h"
 #include "tagkit/CoverArtImage.h"
 #include "tagkit/CoverArtPickerWindow.h"
-#include "tagkit/CoverArtView.h"
+#include "tagkit/CompactView.h"
+#include "tagkit/FieldEditorWindow.h"
 #include "tagkit/TagAttributes.h"
+#include "tagkit/TagField.h"
 #include "tagkit/TagRecord.h"
 #include "tagkit/TagWriter.h"
 
@@ -63,7 +65,6 @@
 #include "BarberPoleView.h"
 #include "CommandConstants.h"
 #include "CheckMark.h"
-#include "EditorView.h"
 #include "EncoderListView.h"
 #include "GUIStrings.h"
 #include "PrefWindow.h"
@@ -117,6 +118,9 @@ NewAppIcon()
 AppView::AppView()
 	:
 	BView("AppView", B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE_JUMP),
+	pendingEdits(this),
+	fieldEditor(NULL),
+	editingEnabled(true),
 	selectedCoverArt(0),
 	coverArtPicker(NULL),
 	fLastCheckedFreeBytes(-1),
@@ -134,6 +138,7 @@ AppView::~AppView()
 	stop_watching(this);
 
 	CloseCoverArtPicker();
+	CloseFieldEditor();
 	delete mbTrackMetadata;
 }
 
@@ -144,37 +149,25 @@ AppView::InitView()
 
 	SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
 
-	editorView = new EditorView();
-	editorScrollView = new BScrollView("editorScrollView", editorView, 
-										B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE | B_FRAME_EVENTS,
-										false, true, B_NO_BORDER);
-	editorScrollView->SetExplicitMinSize(BSize(0, 0));
-	editorScrollView->ScrollBar(B_VERTICAL)->SetRange(0, 250);
-	editorScrollView->ScrollBar(B_VERTICAL)->SetProportion(0.5);
-
-	editorBoxView = new BBox("editorBoxView");
-	editorBoxView->SetLabel(EDITOR_LABEL);
-	editorBoxView->SetExplicitMinSize(BSize(0, 125));
-	editorBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
-
-	coverArtView = new tagkit::CoverArtView("coverArtView");
-	// TagKit's view is a fixed 112 pixel square unless told otherwise; in
-	// Hare it grows and shrinks with the splitters.
-	coverArtView->SetExplicitMinSize(BSize(64.0f, 64.0f));
-	coverArtView->SetExplicitPreferredSize(BSize(150.0f, 150.0f));
-	coverArtView->SetExplicitMaxSize(
+	// TagKit's compact view: a square with the tags of the selected rows next
+	// to a square with their cover art. Clicking a field edits it, a right
+	// click on the art offers the cover choices; both messages go to the
+	// window (AppWindow forwards them here). Hare shows neither the length
+	// nor the format, nor a comment, of a track.
+	compactView = new tagkit::CompactView("compactView");
+	compactView->SetShowDuration(false);
+	compactView->SetShowFormat(false);
+	compactView->SetMinimumViewSize(300.0f, 125.0f);
+	compactView->SetExplicitMaxSize(
 		BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+	compactView->SetEditMessage(new BMessage(FIELD_EDIT_REQUESTED));
 	// The "Load CD" button shown in place of the cover while there's none;
 	// AppWindow handles the press. It's only shown while a CD is mounted
 	// (CD_MOUNT_STATE_CHANGED below), which nothing says yet.
-	coverArtView->SetEmptyButton(LOAD_CD_BUTTON_TXT, NewAppIcon(),
+	compactView->SetEmptyButton(LOAD_CD_BUTTON_TXT, NewAppIcon(),
 		new BMessage(LOAD_CD_BUTTON_PRESSED));
-	coverArtView->SetEmptyButtonVisible(false);
-	coverArtView->SetContextMessage(new BMessage(COVER_ART_CONTEXT));
-
-	coverArtBoxView = new BBox("coverArtBoxView");
-	coverArtBoxView->SetExplicitMinSize(BSize(100, 125));
-	coverArtBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+	compactView->SetEmptyButtonVisible(false);
+	compactView->SetCoverContextMessage(new BMessage(COVER_ART_CONTEXT));
 
 	encodeButton = new BButton("encodeButton", ENCODE_BTN,
 							   new BMessage(ENCODE_MSG));
@@ -210,40 +203,12 @@ AppView::InitView()
 	statusBoxView->AddChild(barberPoleView);
 	((BCardLayout*)statusBoxView->GetLayout())->SetVisibleItem((int32)0);
 
-	BLayoutBuilder::Group<>(editorBoxView, B_HORIZONTAL)
-		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_BIG_INSETS,
-					B_USE_DEFAULT_SPACING, B_USE_BIG_INSETS)
-		.Add(editorScrollView, 0.0f)
-	.End();
-
-	BLayoutBuilder::Group<>(coverArtBoxView, B_HORIZONTAL)
-		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
-					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
-		// Needs a non-zero weight: with a weight of 0 the layout can leave
-		// the view at its preferred size even when the box is smaller (low
-		// resolution screens/small windows), so the view ends up bigger
-		// than what's visible and gets clipped by the box. With a weight
-		// the view shrinks to fit.
-		.Add(coverArtView, 1.0f)
-	.End();
-
-	// Details editor and cover art side by side, with a vertical splitter
-	// between them, sitting above the horizontal splitter that separates
-	// this row from the track list below. Both BSplitViews are kept as
-	// members so SaveLayout()/RestoreLayout() can read back and reapply
-	// their current proportions.
-	topSplitView = new BSplitView(B_HORIZONTAL, B_USE_HALF_ITEM_SPACING);
-	topSplitView->AddChild(editorBoxView, 2.0f);
-	topSplitView->AddChild(coverArtBoxView, 1.0f);
-	topSplitView->SetCollapsible(0, false);
-	topSplitView->SetCollapsible(1, false);
-
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_DEFAULT_SPACING)
 		.SetInsets(B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS,
 						B_USE_WINDOW_INSETS, B_USE_WINDOW_INSETS)
 		.AddSplit(B_VERTICAL, B_USE_HALF_ITEM_SPACING)
 			.GetSplitView(&mainSplitView)
-			.Add(topSplitView, 0.0f)
+			.Add(compactView, 0.0f)
 			.Add(listView, 0.0f)
 		.End()
 		.AddGroup(B_HORIZONTAL)
@@ -283,7 +248,7 @@ AppView::MessageReceived(BMessage* message)
 				PRINT(("View Shortcut: %d\n", view));
 				switch (view) {
 					case 0:
-						editorView->MakeFocus(true);
+						compactView->MakeFocus(true);
 						break;
 					case 1:
 						listView->MakeFocus(true);
@@ -311,7 +276,7 @@ AppView::MessageReceived(BMessage* message)
 				// in sync with whether there's actually a CD to load.
 				bool mounted = false;
 				message->FindBool("mounted", &mounted);
-				coverArtView->SetEmptyButtonVisible(mounted);
+				compactView->SetEmptyButtonVisible(mounted);
 			}
 			break;
 		case COVER_ART_FOUND: {
@@ -404,6 +369,9 @@ AppView::MessageReceived(BMessage* message)
 				if (message->FindString("artistId", &str) == B_OK) {
 					mbArtistId = str;
 				}
+				if (message->FindString("year", &str) == B_OK) {
+					mbYear = str;
+				}
 
 				delete mbTrackMetadata;
 				mbTrackMetadata = new BObjectList<TrackMBMetadata, true>(20);
@@ -425,6 +393,9 @@ AppView::MessageReceived(BMessage* message)
 					track->recordingId = recordingId;
 					mbTrackMetadata->AddItem(track);
 				}
+
+				// CDs rarely carry a year of their own; the release's does.
+				ApplyMusicBrainzYear();
 			}
 			break;
 		case MUSICBRAINZ_LOOKUP_STARTED: {
@@ -434,6 +405,7 @@ AppView::MessageReceived(BMessage* message)
 				// grab its cover art/metadata snapshot before that lookup
 				// has actually delivered them.
 				fMusicBrainzLookupsPending++;
+				mbYear = "";
 				encodeButton->SetEnabled(false);
 				UpdateStatusCard();
 			}
@@ -477,11 +449,23 @@ AppView::MessageReceived(BMessage* message)
 			}
 			break;
 		case LIST_SELECTION_MSG: {
-				editorView->ListSelectionChanged(message);
+				RefreshCompactView();
 			}
 			break;
-		case APPLY_ATTRIBUTE_CHANGES: {
-				ApplyAttributeChanges(message);
+		case FIELD_EDIT_REQUESTED: {
+				HandleFieldEditRequested(message);
+			}
+			break;
+		case FIELD_EDITED: {
+				HandleFieldEdited(message);
+			}
+			break;
+		case tagkit::kMsgFieldEditorClosed: {
+				void* editor = NULL;
+				if (message->FindPointer("editor", &editor) == B_OK
+						&& editor == fieldEditor) {
+					fieldEditor = NULL;
+				}
 			}
 			break;
 		case ENCODER_CHANGED:
@@ -680,6 +664,13 @@ AppView::InitializeColumn(BRefRow* row)
 		char volume_name[B_FILE_NAME_LENGTH];
 		volume.GetName(volume_name);
 
+		// A track added after MusicBrainz answered (ApplyMusicBrainzYear()
+		// only reaches the rows there were by then).
+		if (mbYear.Length() > 0) {
+			row->SetField(new BStringField(mbYear.String()),
+				YEAR_COLUMN_INDEX);
+		}
+
 		if (strcmp(volume_name, "Audio CD") != 0) {
 			BString artist(volume_name);
 			int index = artist.FindFirst(" - ");
@@ -815,63 +806,221 @@ AppView::SetSaveAsColumn(BRefRow* row)
 	}
 }
 
-void
-AppView::ApplyAttributeChanges(BMessage* message)
+// Whether the row's file is a track of an audio CD (Haiku's cdda volume).
+static bool
+IsCddaRow(BRefRow* row)
 {
-	PRINT(("AppView::ApplyAttributeChanges(BMessage*)\n"));
+	BVolume volume(row->EntryRef()->device);
+	fs_info fsinfo;
+	if (fs_stat_dev(volume.Device(), &fsinfo) != B_OK)
+		return false;
+	return strcmp(fsinfo.fsh_name, "cdda") == 0;
+}
 
-	type_code index_type;
-	int32 numSelected;
-	message->GetInfo("index", &index_type, &numSelected);
 
-	int32 index;
-	BRefRow* row;
-	for (int i = 0; i < numSelected; i++) {
-		if (message->FindInt32("index", i, &index) != B_OK) {
-			return;
+static BString
+RowString(BRefRow* row, int32 column)
+{
+	BStringField* field = (BStringField*)row->GetField(column);
+	return BString(field != NULL ? field->String() : "");
+}
+
+
+bool
+AppView::EditRowExists(void* row)
+{
+	for (int32 i = 0; i < listView->CountRows(); i++) {
+		if (listView->RowAt(i) == row)
+			return true;
+	}
+	return false;
+}
+
+
+tagkit::TagRecord
+AppView::EditRowRecord(void* pointer)
+{
+	BRefRow* row = static_cast<BRefRow*>(pointer);
+
+	tagkit::TagRecord record;
+	BPath path(row->EntryRef());
+	record.path = path.Path();
+	record.fileName = row->EntryRef()->name;
+	record.artist = RowString(row, ARTIST_COLUMN_INDEX);
+	record.title = RowString(row, TITLE_COLUMN_INDEX);
+	record.album = RowString(row, ALBUM_COLUMN_INDEX);
+	record.genre = RowString(row, GENRE_COLUMN_INDEX);
+	record.comment = RowString(row, COMMENT_COLUMN_INDEX);
+	record.track = atoi(RowString(row, TRACK_COLUMN_INDEX).String());
+	record.year = atoi(RowString(row, YEAR_COLUMN_INDEX).String());
+	record.tagsLoaded = true;
+	return record;
+}
+
+
+void
+AppView::EditSetRowRecord(void* pointer, const tagkit::TagRecord& record)
+{
+	BRefRow* row = static_cast<BRefRow*>(pointer);
+	tagkit::TagRecord current = EditRowRecord(row);
+
+	static const struct {
+		tagkit::tag_field field;
+		int32 column;
+	} fields[] = {
+		{ tagkit::TAG_FIELD_ARTIST, ARTIST_COLUMN_INDEX },
+		{ tagkit::TAG_FIELD_TITLE, TITLE_COLUMN_INDEX },
+		{ tagkit::TAG_FIELD_ALBUM, ALBUM_COLUMN_INDEX },
+		{ tagkit::TAG_FIELD_TRACK, TRACK_COLUMN_INDEX },
+		{ tagkit::TAG_FIELD_YEAR, YEAR_COLUMN_INDEX },
+		{ tagkit::TAG_FIELD_GENRE, GENRE_COLUMN_INDEX },
+		{ tagkit::TAG_FIELD_COMMENT, COMMENT_COLUMN_INDEX }
+	};
+
+	// Only the fields that really changed are written back, so a track
+	// number like "5/12" isn't rewritten as "05" by an edit of the artist.
+	for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+		BString value = tagkit::tag_field_value(record, fields[i].field);
+		if (value == tagkit::tag_field_value(current, fields[i].field))
+			continue;
+
+		if (fields[i].field == tagkit::TAG_FIELD_TRACK
+				&& value.CountChars() == 1) {
+			value.Prepend("0");
 		}
+		row->SetField(new BStringField(value.String()), fields[i].column);
+	}
 
-		row = (BRefRow*)listView->RowAt(index);
-		if (!row) {
-			return;
-		}
+	SetSaveAsColumn(row);
+	listView->InvalidateRow(row);
+}
 
-		BString tmpString;
 
-		if (message->FindString("artist", &tmpString) == B_OK) {
-			row->SetField(new BStringField(tmpString.String()), ARTIST_COLUMN_INDEX);
-		}
+void
+AppView::RefreshCompactView()
+{
+	// Point the view away before its records change under it.
+	compactView->SetRecord(NULL);
+	compactRecords.clear();
 
-		if (message->FindString("album", &tmpString) == B_OK) {
-			row->SetField(new BStringField(tmpString.String()), ALBUM_COLUMN_INDEX);
-		}
+	for (BRefRow* row = (BRefRow*)listView->CurrentSelection(); row != NULL;
+			row = (BRefRow*)listView->CurrentSelection(row)) {
+		compactRecords.push_back(EditRowRecord(row));
+	}
 
-		if (message->FindString("title", &tmpString) == B_OK) {
-			row->SetField(new BStringField(tmpString.String()), TITLE_COLUMN_INDEX);
-		}
+	if (compactRecords.size() == 1) {
+		compactView->SetRecord(&compactRecords[0]);
+	} else if (compactRecords.size() > 1) {
+		std::vector<const tagkit::TagRecord*> pointers;
+		for (size_t i = 0; i < compactRecords.size(); i++)
+			pointers.push_back(&compactRecords[i]);
+		compactView->SetRecords(pointers);
+	}
+}
 
-		if (message->FindString("year", &tmpString) == B_OK) {
-			row->SetField(new BStringField(tmpString.String()), YEAR_COLUMN_INDEX);
-		}
 
-		if (message->FindString("comment", &tmpString) == B_OK) {
-			row->SetField(new BStringField(tmpString.String()), COMMENT_COLUMN_INDEX);
-		}
+void
+AppView::HandleFieldEditRequested(BMessage* message)
+{
+	if (!editingEnabled)
+		return;
 
-		if (message->FindString("track", &tmpString) == B_OK) {
-			if (tmpString.CountChars() == 1) {
-				tmpString.Prepend("0");
-			}
-			row->SetField(new BStringField(tmpString.String()), TRACK_COLUMN_INDEX);
-		}
+	int32 fieldNumber = -1;
+	if (message->FindInt32("field", &fieldNumber) != B_OK || fieldNumber < 0
+			|| fieldNumber >= tagkit::TAG_FIELD_COUNT) {
+		return;
+	}
 
-		if (message->FindString("genre", &tmpString) == B_OK) {
-			row->SetField(new BStringField(tmpString.String()), GENRE_COLUMN_INDEX);
-		}
+	// The compact view edits whatever is selected.
+	BMessage result(FIELD_EDITED);
+	result.AddInt32("field", fieldNumber);
+	std::vector<tagkit::TagRecord> selected;
+	for (BRefRow* row = (BRefRow*)listView->CurrentSelection(); row != NULL;
+			row = (BRefRow*)listView->CurrentSelection(row)) {
+		result.AddPointer("row", row);
+		selected.push_back(EditRowRecord(row));
+	}
+	if (selected.empty())
+		return;
 
+	std::vector<const tagkit::TagRecord*> records;
+	for (size_t i = 0; i < selected.size(); i++)
+		records.push_back(&selected[i]);
+
+	BPoint where;
+	float width = 0;
+	message->FindPoint("where", &where);
+	message->FindFloat("width", &width);
+
+	// An editor still open accepts its text and closes itself when it loses
+	// the focus to this click, so a new one can just be started.
+	fieldEditor = tagkit::new_field_editor(BMessenger(this), result,
+		(tagkit::tag_field)fieldNumber, records, where, width, NULL);
+	fieldEditor->Show();
+}
+
+
+void
+AppView::HandleFieldEdited(BMessage* message)
+{
+	int32 fieldNumber = -1;
+	BString value;
+	if (!editingEnabled || message->FindInt32("field", &fieldNumber) != B_OK
+			|| message->FindString("value", &value) != B_OK
+			|| fieldNumber < 0 || fieldNumber >= tagkit::TAG_FIELD_COUNT) {
+		return;
+	}
+
+	// Rows removed while the editor was open are skipped by PendingEdits.
+	std::vector<void*> rows;
+	void* pointer = NULL;
+	for (int32 i = 0; message->FindPointer("row", i, &pointer) == B_OK; i++)
+		rows.push_back(pointer);
+
+	int32 changed = pendingEdits.SetField(rows,
+		(tagkit::tag_field)fieldNumber, value);
+	// Hare has no Apply button: an edit counts at once.
+	pendingEdits.Apply();
+	if (changed < 0) {
+		AlertUser(FIELD_NUMBER_INVALID_TXT);
+		return;
+	}
+	if (changed > 0)
+		RefreshCompactView();
+}
+
+
+void
+AppView::CloseFieldEditor()
+{
+	if (fieldEditor != NULL) {
+		if (fieldEditor->Lock())
+			fieldEditor->Quit();
+		fieldEditor = NULL;
+	}
+}
+
+
+void
+AppView::ApplyMusicBrainzYear()
+{
+	if (mbYear.Length() == 0)
+		return;
+
+	// Only a blank year is filled in: one typed or read from the file wins.
+	bool changed = false;
+	for (int32 i = 0; i < listView->CountRows(); i++) {
+		BRefRow* row = (BRefRow*)listView->RowAt(i);
+		if (RowString(row, YEAR_COLUMN_INDEX).Length() > 0 || !IsCddaRow(row))
+			continue;
+
+		row->SetField(new BStringField(mbYear.String()), YEAR_COLUMN_INDEX);
 		SetSaveAsColumn(row);
 		listView->InvalidateRow(row);
+		changed = true;
 	}
+	if (changed)
+		RefreshCompactView();
 }
 
 void
@@ -930,7 +1079,8 @@ AppView::RemoveDeviceItemsFromList(int32 device)
 		// showing stale info (or an enabled Encode button) for a CD that's
 		// no longer in the drive.
 		ClearCoverArtCandidates();
-		editorView->Clear();
+		mbYear = "";
+		RefreshCompactView();
 		encodeButton->SetEnabled(false);
 	}
 
@@ -1750,7 +1900,7 @@ AppView::EncodeThread(void* args)
 	BMessenger statusBarMessenger(view->statusBar);
 
 	if (view->LockLooper()) {
-		view->editorView->SetEnabled(false);
+		view->editingEnabled = false;
 		view->encodeButton->SetEnabled(false);
 		view->cancelButton->SetEnabled(true);
 		// The real progress bar always wins over the barber pole - see
@@ -1926,7 +2076,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -1951,7 +2101,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -1978,7 +2128,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -2003,7 +2153,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -2025,7 +2175,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -2068,7 +2218,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -2110,7 +2260,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -2153,7 +2303,7 @@ AppView::EncodeThread(void* args)
 				BString remaining(STATUS_TRAILING_LABEL);
 				remaining << 0;
 				view->statusBar->Reset(STATUS_LABEL, remaining.String());
-				view->editorView->SetEnabled(true);
+				view->editingEnabled = true;
 				view->encodeButton->SetEnabled(true);
 				view->cancelButton->SetEnabled(false);
 				view->Invalidate();
@@ -2233,7 +2383,7 @@ AppView::EncodeThread(void* args)
 						BString remaining(STATUS_TRAILING_LABEL);
 						remaining << 0;
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
-						view->editorView->SetEnabled(true);
+						view->editingEnabled = true;
 						view->encodeButton->SetEnabled(true);
 						view->cancelButton->SetEnabled(false);
 						view->Invalidate();
@@ -2258,7 +2408,7 @@ AppView::EncodeThread(void* args)
 							BString remaining(STATUS_TRAILING_LABEL);
 							remaining << 0;
 							view->statusBar->Reset(STATUS_LABEL, remaining.String());
-							view->editorView->SetEnabled(true);
+							view->editingEnabled = true;
 							view->encodeButton->SetEnabled(true);
 							view->cancelButton->SetEnabled(false);
 							view->Invalidate();
@@ -2280,7 +2430,7 @@ AppView::EncodeThread(void* args)
 						BString remaining(STATUS_TRAILING_LABEL);
 						remaining << 0;
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
-						view->editorView->SetEnabled(true);
+						view->editingEnabled = true;
 						view->encodeButton->SetEnabled(true);
 						view->cancelButton->SetEnabled(false);
 						view->Invalidate();
@@ -2320,7 +2470,7 @@ AppView::EncodeThread(void* args)
 						BString remaining(STATUS_TRAILING_LABEL);
 						remaining << 0;
 						view->statusBar->Reset(STATUS_LABEL, remaining.String());
-						view->editorView->SetEnabled(true);
+						view->editingEnabled = true;
 						view->encodeButton->SetEnabled(true);
 						view->cancelButton->SetEnabled(false);
 						view->Invalidate();
@@ -2368,7 +2518,7 @@ AppView::EncodeThread(void* args)
 		BString remaining(STATUS_TRAILING_LABEL);
 		remaining << 0;
 		view->statusBar->Reset(STATUS_LABEL, remaining.String());
-		view->editorView->SetEnabled(true);
+		view->editingEnabled = true;
 		view->encodeButton->SetEnabled(true);
 		view->cancelButton->SetEnabled(false);
 		view->Invalidate();
@@ -2402,11 +2552,6 @@ AppView::SaveLayout()
 		layout.AddRect("windowFrame", Window()->Frame());
 	}
 
-	if (topSplitView && (topSplitView->CountChildren() == 2)) {
-		layout.AddFloat("topSplitWeight", topSplitView->ChildAt(0)->Frame().Width());
-		layout.AddFloat("topSplitWeight", topSplitView->ChildAt(1)->Frame().Width());
-	}
-
 	if (mainSplitView && (mainSplitView->CountChildren() == 2)) {
 		layout.AddFloat("mainSplitWeight", mainSplitView->ChildAt(0)->Frame().Height());
 		layout.AddFloat("mainSplitWeight", mainSplitView->ChildAt(1)->Frame().Height());
@@ -2425,13 +2570,6 @@ AppView::RestoreLayout()
 	BMessage* layout = settings->LayoutState();
 
 	float weight0, weight1;
-	if (topSplitView
-			&& (layout->FindFloat("topSplitWeight", 0, &weight0) == B_OK)
-			&& (layout->FindFloat("topSplitWeight", 1, &weight1) == B_OK)) {
-		topSplitView->SetItemWeight(0, weight0, false);
-		topSplitView->SetItemWeight(1, weight1, true);
-	}
-
 	if (mainSplitView
 			&& (layout->FindFloat("mainSplitWeight", 0, &weight0) == B_OK)
 			&& (layout->FindFloat("mainSplitWeight", 1, &weight1) == B_OK)) {
@@ -2497,7 +2635,7 @@ AppView::ClearCoverArtCandidates()
 	CloseCoverArtPicker();
 	coverArtImages.clear();
 	selectedCoverArt = 0;
-	coverArtView->Clear();
+	compactView->SetCoverBitmap(NULL);
 }
 
 
@@ -2512,7 +2650,7 @@ AppView::ShowSelectedCoverArt()
 
 	// A candidate that doesn't decode just shows the placeholder; its bytes
 	// are still what gets written to the files.
-	coverArtView->SetBitmap(bitmap);
+	compactView->SetCoverBitmap(bitmap);
 }
 
 

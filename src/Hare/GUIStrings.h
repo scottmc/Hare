@@ -64,6 +64,7 @@
 #define FILE_NAME_PATTERN_LABEL B_TRANSLATE_CONTEXT("Save As:", "GUIStrings")
 
 #define EDITOR_LABEL B_TRANSLATE_CONTEXT("Details Editor", "GUIStrings")
+#define FIELD_NUMBER_INVALID_TXT B_TRANSLATE_CONTEXT("The track and the year must be blank or a whole number (up to 9999).", "GUIStrings")
 
 #define REMOVED_TXT B_TRANSLATE_CONTEXT("One or more items in the list have been deleted.\nEncoding has been canceled.", "GUIStrings")
 

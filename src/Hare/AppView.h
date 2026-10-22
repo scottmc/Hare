@@ -14,6 +14,8 @@
 #include <View.h>
 
 #include "tagkit/CoverArtImage.h"
+#include "tagkit/PendingEdits.h"
+#include "tagkit/TagRecord.h"
 
 #include "RefRow.h"
 
@@ -26,13 +28,13 @@ class BStatusBar;
 class BStringView;
 class BTextControl;
 class BarberPoleView;
-class EditorView;
 class EncoderListView;
 class PrefWindow;
 
 namespace tagkit {
+class CompactView;
 class CoverArtPickerWindow;
-class CoverArtView;
+class FieldEditorWindow;
 }
 
 // One track's MusicBrainz metadata, as reported by MusicBrainzLookup's
@@ -47,7 +49,7 @@ struct TrackMBMetadata {
 	BString recordingId;
 };
 
-class AppView : public BView {
+class AppView : public BView, public tagkit::EditHost {
 public:
 	AppView();
 	~AppView();
@@ -56,11 +58,16 @@ public:
 	virtual void RefsReceived(BMessage* message);
 	void SaveLayout();
 	void RestoreLayout();
+
+	// tagkit::EditHost: how TagKit's PendingEdits reads and writes the rows
+	// of the list (a "row" is a BRefRow*).
+	virtual bool EditRowExists(void* row);
+	virtual tagkit::TagRecord EditRowRecord(void* row);
+	virtual void EditSetRowRecord(void* row, const tagkit::TagRecord& record);
 private:
 	void InitView();
 	void InitializeColumn(BRefRow* row);
 	void SetSaveAsColumn(BRefRow* row);
-	void ApplyAttributeChanges(BMessage* message);
 	void RemoveNodeFromList(node_ref* ref);
 	void RemoveDeviceItemsFromList(int32 device);
 	BString ReplaceInvalidFileChars(BString filestr, int32 swaptype);
@@ -84,8 +91,19 @@ private:
 		const BString& artistId,
 		const BObjectList<TrackMBMetadata, true>* trackMetadata,
 		BString* errorMessage = NULL);
+	// Shows the selected rows (none, one or several) in compactView.
+	void RefreshCompactView();
+	// A FIELD_EDIT_REQUESTED message from compactView: opens the field
+	// editor over the selected rows.
+	void HandleFieldEditRequested(BMessage* message);
+	// A FIELD_EDITED message: the editor's result, applied to the rows.
+	void HandleFieldEdited(BMessage* message);
+	void CloseFieldEditor();
+	// Fills in the year of the rows of the loaded CD that have none from
+	// mbYear (the release year MusicBrainz reported).
+	void ApplyMusicBrainzYear();
 	void ClearCoverArtCandidates();
-	// Shows coverArtImages[selectedCoverArt] in coverArtView.
+	// Shows coverArtImages[selectedCoverArt] in compactView.
 	void ShowSelectedCoverArt();
 	// Opens (or replaces) the picker window, when there's a choice to make.
 	void ShowCoverArtPicker();
@@ -105,12 +123,18 @@ private:
 	void UpdateStatusCard();
 	PrefWindow* prefWin;
 	EncoderListView* listView;
-	EditorView* editorView;
-	BBox* editorBoxView;
-	BScrollView* editorScrollView;
-	tagkit::CoverArtView* coverArtView;
-	BBox* coverArtBoxView;
-	BSplitView* topSplitView;
+	// The tags and cover art of the selected rows, above the list. Edits made
+	// in it apply at once to the rows (pendingEdits, applied right away,
+	// does the work); compactRecords is what compactView currently points at.
+	tagkit::CompactView* compactView;
+	std::vector<tagkit::TagRecord> compactRecords;
+	tagkit::PendingEdits pendingEdits;
+	tagkit::FieldEditorWindow* fieldEditor;
+	// False while an encode/rip is running: the rows are being read then, so
+	// edits are ignored (the old editor was disabled for the same reason).
+	bool editingEnabled;
+	// The release year MusicBrainz found for the loaded CD ("" when none).
+	BString mbYear;
 	BSplitView* mainSplitView;
 	BButton* encodeButton;
 	BButton* cancelButton;
@@ -134,7 +158,7 @@ private:
 	// Every cover-art candidate MusicBrainzLookup found for the currently
 	// loaded disc's release (see MessageReceived()'s COVER_ART_FOUND case) -
 	// almost always one entry, none until the first COVER_ART_FOUND
-	// arrives. coverArtView shows coverArtImages[selectedCoverArt]; with
+	// arrives. compactView shows coverArtImages[selectedCoverArt]; with
 	// more than one candidate, coverArtPicker (TagKit's picker window, NULL
 	// while closed) is where the user chooses between them, and
 	// EncodeThread() writes out whichever one is selected when a run starts.

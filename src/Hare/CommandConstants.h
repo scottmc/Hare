@@ -40,6 +40,9 @@
 #define LOAD_CD_BUTTON_PRESSED '037'
 #define COVER_ART_CONTEXT '038'
 #define COVER_ART_CHOOSE '039'
+// compactView asks for a field to be edited / the field editor's result.
+#define FIELD_EDIT_REQUESTED '040'
+#define FIELD_EDITED '041'
 
 // Cap on how many MusicBrainz cover-art candidates get fetched and
 // offered to the user to choose between - see TagKit's

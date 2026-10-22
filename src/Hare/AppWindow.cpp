@@ -708,6 +708,11 @@ AppWindow::MessageReceived(BMessage* message)
 		case LOAD_CD_BUTTON_PRESSED:
 			LoadFirstMountedCd();
 			break;
+		// TagKit's compact view posts these to the window it's in.
+		case COVER_ART_CONTEXT:
+		case FIELD_EDIT_REQUESTED:
+			viewMessenger->SendMessage(message);
+			break;
 		default:
 			BWindow::MessageReceived(message);
 	}
