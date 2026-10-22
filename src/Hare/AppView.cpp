@@ -157,7 +157,10 @@ AppView::InitView()
 	compactView = new tagkit::CompactView("compactView");
 	compactView->SetShowDuration(false);
 	compactView->SetShowFormat(false);
-	compactView->SetMinimumViewSize(300.0f, 125.0f);
+	// The tag square is twice as wide as the cover square (TagKit's widest
+	// setting): the long names and titles of an album need the room.
+	compactView->SetInfoWidthRatio(2.0f);
+	compactView->SetMinimumViewSize(360.0f, 125.0f);
 	compactView->SetExplicitMaxSize(
 		BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 	compactView->SetEditMessage(new BMessage(FIELD_EDIT_REQUESTED));

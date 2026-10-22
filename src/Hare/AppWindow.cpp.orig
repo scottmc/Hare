@@ -1,0 +1,768 @@
+/*
+ * Copyright 2000-2026, Hare Team. All rights reserved.
+ * Distributed under the terms of the MIT License.
+ */
+#include "AppWindow.h"
+
+#include <AboutWindow.h>
+#include "AEEncoder.h"
+#include <Application.h>
+#include <Alert.h>
+#include <AppFileInfo.h>
+#include <Debug.h>
+#include <Directory.h>
+#include <Entry.h>
+#include <File.h>
+#include <FindDirectory.h>
+#include <fs_info.h>
+#include <InterfaceDefs.h>
+#include <image.h>
+#include <LayoutBuilder.h>
+#include <Message.h>
+#include <Menu.h>
+#include <MenuBar.h>
+#include <MenuItem.h>
+#include <NodeMonitor.h>
+#include <Path.h>
+#include <Roster.h>
+#include <stdlib.h>
+#include <String.h>
+#include <Volume.h>
+#include <VolumeRoster.h>
+
+#include "AppDefs.h"
+#include "AppView.h"
+#include "CommandConstants.h"
+#include "GUIStrings.h"
+#include "MusicBrainzLookup.h"
+#include "Settings.h"
+
+namespace {
+
+// __get_haiku_revision() is a private libroot call (see
+// headers/private/libroot/system_revision.h in the Haiku source - also
+// what AboutSystem itself calls to show "Version: hrevNNNNN" in its About
+// box) that returns a string such as "hrev60141" or "hrev60141+3
+// [branchname]" for an unofficial/local build, or "0" for a from-source
+// build with no hrev tags reachable at all. It's declared directly here
+// instead of pulling in that private header, since the function itself is
+// a stable, long-standing part of libroot that every app already links
+// against.
+extern "C" const char* __get_haiku_revision(void);
+
+// The Haiku revision that first shipped the SCSI CD driver fixes for
+// B_SCSI_GET_TOC/READ_CD. Loading a CD on an older Haiku can KDL the
+// whole system, so AppWindow::CheckHaikuRevision() below refuses to let
+// the user get far enough to hit that rather than letting them find out
+// the hard way.
+const int32 kMinSafeHaikuRevision = 60141;
+
+// Parses the leading "hrevNNNNN" out of a Haiku revision string like the
+// ones __get_haiku_revision() returns. Returns false (and leaves
+// *revision untouched) if the string doesn't start with "hrev" followed
+// by at least one digit - e.g. a from-source build without any hrev tags
+// reachable, which returns "0". Unparseable is treated as "unknown", not
+// "unsafe", so an odd build never gets wrongly locked out of CD support.
+bool
+ParseHaikuRevision(const char* revisionString, int32* revision)
+{
+	if (!revisionString || (strncmp(revisionString, "hrev", 4) != 0)) {
+		return false;
+	}
+
+	char* end = NULL;
+	long parsed = strtol(revisionString + 4, &end, 10);
+	if (end == (revisionString + 4)) {
+		return false;
+	}
+
+	*revision = (int32)parsed;
+	return true;
+}
+
+} // namespace
+
+AppWindow::AppWindow()
+	: 
+	BWindow(BRect(0,0,0,0) , APPLICATION, B_TITLED_WINDOW,
+				B_ASYNCHRONOUS_CONTROLS| B_AUTO_UPDATE_SIZE_LIMITS)
+{
+	PRINT(("AppWindow::AppWindow()\n"));
+
+	InitWindow();
+
+	BRect frame;
+	if (settings->LayoutState()->FindRect("windowFrame", &frame) == B_OK) {
+		MoveTo(frame.LeftTop());
+		ResizeTo(frame.Width(), frame.Height());
+	} else {
+		CenterOnScreen();
+	}
+}
+
+AppWindow::~AppWindow()
+{
+	PRINT(("AppWindow::~AppWindow()\n"));
+
+	stop_watching(this);
+	delete volumes;
+
+//	settings->SetWindowFrame(Frame());
+}
+
+void
+AppWindow::InitWindow()
+{
+	PRINT(("AppWindow::InitWindow()\n"));
+
+	encoderAddon = 0;
+
+	CheckHaikuRevision();
+
+	// appView/viewMessenger aren't created until further down this same
+	// function (InitMenus(), called below, runs before that point) - and
+	// as plain uninitialized pointer members they start out holding
+	// whatever garbage was already on the heap, not NULL. LoadCDMenu()
+	// (called from InitMenus()) checks viewMessenger before using it,
+	// but that check only works if a not-yet-created messenger actually
+	// reads as NULL, which is what crashed on startup before this line
+	// was added - the garbage pointer read as "valid" and was then
+	// dereferenced.
+	appView = NULL;
+	viewMessenger = NULL;
+
+	SetTitle(APPLICATION);
+	SetWorkspaces(B_CURRENT_WORKSPACE);
+
+	node_ref addon_ref;
+	BDirectory addonDir(settings->AddOnsDirectory());
+	addonDir.GetNodeRef(&addon_ref);
+	watch_node(&addon_ref, B_WATCH_DIRECTORY, this);
+
+	windowMessenger = new BMessenger(this);
+	volumes = new BVolumeRoster();
+	BVolume vol;
+	volumes->Rewind();
+	while (volumes->GetNextVolume(&vol) == B_NO_ERROR) {
+		fs_info info;
+		fs_stat_dev(vol.Device(), &info);
+		if (strcmp(info.fsh_name, "cdda") == 0) {
+			BDirectory root;
+			vol.GetRootDirectory(&root);
+			node_ref nref;
+			root.GetNodeRef(&nref);
+			watch_node(&nref, B_WATCH_NAME, this);
+		}
+	}
+
+	volumes->StartWatching(*windowMessenger);
+
+	InitMenus();
+	SetKeyMenuBar(menuBar);
+
+	appView = new AppView();
+	
+	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
+		.Add(menuBar)
+		.Add(appView)
+	.End();
+
+	viewMessenger = new BMessenger(appView);
+
+	// LoadCDMenu() was already called once from InitMenus() above, before
+	// appView (and viewMessenger) existed, so its CD_MOUNT_STATE_CHANGED
+	// send was skipped (see the viewMessenger check there). Call it again
+	// now so the cover art view finds out about a CD that's already mounted at
+	// launch, instead of only ever hearing about mounts/unmounts from
+	// here on.
+	LoadCDMenu();
+
+	BMessage* viewShortcut = 0;
+	viewShortcut = new BMessage(VIEW_SHORTCUT);
+	viewShortcut->AddInt32("view", 0);
+	AddShortcut('F', 0, viewShortcut, appView);
+
+	viewShortcut = new BMessage(VIEW_SHORTCUT);
+	viewShortcut->AddInt32("view", 1);
+	AddShortcut('E', 0, viewShortcut, appView);
+
+	viewShortcut = new BMessage(VIEW_SHORTCUT);
+	viewShortcut->AddInt32("view", 2);
+	AddShortcut('L', 0, viewShortcut, appView);
+	
+	AddShortcut(B_DELETE, 0, new BMessage(REMOVE_MSG), appView);
+}
+
+BMenuBar*
+AppWindow::MenuBar()
+{
+	PRINT(("AppWindow::MenuBar()\n"));
+
+	return menuBar;
+}
+
+// Best-effort startup guard: if the running Haiku predates
+// kMinSafeHaikuRevision, CD support is disabled outright (see
+// LoadCDMenu() and AddVolumeToList() below) rather than letting the user
+// select a CD and hit the SCSI driver bug that can KDL the system. A
+// revision string we can't confidently parse (see ParseHaikuRevision())
+// is treated as safe, not unsafe, so an unusual build never gets wrongly
+// locked out.
+void
+AppWindow::CheckHaikuRevision()
+{
+	PRINT(("AppWindow::CheckHaikuRevision()\n"));
+
+	fCdOperationsAllowed = true;
+
+	int32 revision;
+	if (ParseHaikuRevision(__get_haiku_revision(), &revision)
+			&& (revision < kMinSafeHaikuRevision)) {
+		fCdOperationsAllowed = false;
+
+		BString msg(OLD_HAIKU_PREFIX_TXT);
+		msg << __get_haiku_revision();
+		msg << OLD_HAIKU_HREV_TXT;
+		msg << kMinSafeHaikuRevision;
+		msg << OLD_HAIKU_DISABLED_IN_TXT;
+		msg << APPLICATION;
+		msg << OLD_HAIKU_UNTIL_UPDATE_TXT;
+		BAlert* alert = new BAlert(APPLICATION, msg.String(), OK, NULL,
+			NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+		alert->Go();
+	}
+}
+
+void
+AppWindow::InitMenus()
+{
+	PRINT(("AppWindow::InitMenus()\n"));
+
+	menuBar = new BMenuBar(BRect(), "menuBar");
+
+	BMenu* fileMenu = new BMenu(FILE_MENU);
+	BMenu* editMenu = new BMenu(EDIT_MENU);
+
+	loadCdMenu = new BMenu(LOAD_CD_SUBMENU);
+	LoadCDMenu();
+	fileMenu->AddItem(loadCdMenu);
+	fileMenu->AddSeparatorItem();
+	fileMenu->AddItem(new BMenuItem(ABOUT_MENU_ITEM,
+									new BMessage(B_ABOUT_REQUESTED), 'A', B_OPTION_KEY));
+	fileMenu->AddSeparatorItem();
+	fileMenu->AddItem(new BMenuItem(QUIT_MENU_ITEM,
+									new BMessage(B_QUIT_REQUESTED), 'Q'));
+
+	editMenu->AddItem(new BMenuItem(SELECT_ALL,
+									new BMessage(MENU_ITEM_SELECTED), 'A'));
+	editMenu->AddItem(new BMenuItem(DESELECT_ALL,
+									new BMessage(MENU_ITEM_SELECTED), 'D'));
+	editMenu->AddItem(new BMenuItem(REMOVE,
+									new BMessage(MENU_ITEM_SELECTED), 'R'));
+	editMenu->AddSeparatorItem();
+	editMenu->AddItem(new BMenuItem(SAVE_LAYOUT,
+									new BMessage(MENU_ITEM_SELECTED), 'L', B_OPTION_KEY));
+	editMenu->AddItem(new BMenuItem(PREFS,
+									new BMessage(MENU_ITEM_SELECTED), 'P'));
+
+	encoderMenu = new BMenu(ENCODER_MENU);
+	encoderMenu->SetRadioMode(true);
+
+	menuBar->AddItem(fileMenu);
+	menuBar->AddItem(editMenu);
+	menuBar->AddItem(encoderMenu);
+	LoadEncoderMenu();
+
+	SetKeyMenuBar(menuBar);
+}
+
+void
+AppWindow::LoadCDMenu()
+{
+	PRINT(("AppWindow::LoadCDMenu()\n"));
+
+	int32 numItems = loadCdMenu->CountItems();
+	for (int32 i = 0; i < numItems; i++) {
+		BMenuItem* item = loadCdMenu->RemoveItem((int32)0);
+		delete item;
+	}
+
+	if (!fCdOperationsAllowed) {
+		loadCdMenu->AddItem(new BMenuItem(
+			CD_DISABLED_MENU_ITEM_TXT, NULL));
+		return;
+	}
+
+	BVolume volume;
+	volumes->Rewind();
+	char shortcut = '1';
+	bool anyCdMounted = false;
+	while (volumes->GetNextVolume(&volume) == B_NO_ERROR) {
+		fs_info info;
+		fs_stat_dev(volume.Device(), &info);
+		if (strcmp(info.fsh_name, "cdda") == 0) {
+			BMessage* menuMessage = new BMessage(MENU_ITEM_SELECTED);
+			menuMessage->AddInt32("dev", volume.Device());
+			loadCdMenu->AddItem(new BMenuItem(info.volume_name, menuMessage,
+											  shortcut, B_COMMAND_KEY));
+			shortcut++;
+			anyCdMounted = true;
+		}
+	}
+
+	numItems = loadCdMenu->CountItems();
+	if (numItems == 0) {
+		loadCdMenu->AddItem(new BMenuItem(NO_CD_MOUNTED, NULL));
+	}
+
+	// Lets the cover art view show or hide its "Load CD" button (see
+	// AppView's CD_MOUNT_STATE_CHANGED case) without it having to duplicate
+	// this same cdda volume scan itself. Sent every time this menu is
+	// rebuilt, which already happens both at startup and on every
+	// mount/unmount, so the button's state stays in sync for free.
+	// InitMenus() (and so this very first call) runs before InitWindow()
+	// has created appView/viewMessenger, so guard against that - the
+	// InitWindow() call right after viewMessenger is set up re-calls
+	// LoadCDMenu() to cover the startup case instead.
+	if (viewMessenger) {
+		BMessage cdMountMsg(CD_MOUNT_STATE_CHANGED);
+		cdMountMsg.AddBool("mounted", anyCdMounted);
+		viewMessenger->SendMessage(&cdMountMsg);
+	}
+}
+
+void
+AppWindow::LoadFirstMountedCd()
+{
+	PRINT(("AppWindow::LoadFirstMountedCd()\n"));
+
+	BVolume volume;
+	volumes->Rewind();
+	while (volumes->GetNextVolume(&volume) == B_NO_ERROR) {
+		fs_info info;
+		fs_stat_dev(volume.Device(), &info);
+		if (strcmp(info.fsh_name, "cdda") == 0) {
+			AddVolumeToList(volume.Device());
+			break;
+		}
+	}
+}
+
+void
+AppWindow::LoadEncoderMenu()
+{
+	PRINT(("AppWindow::LoadEncoderMenu()\n"));
+
+	if (!settings->IsEncoding()) {
+		if (encoderAddon > 0) {
+			AEEncoder* encoder = settings->Encoder();
+			if (encoder) {
+				if (!menuBar->RemoveItem(encoder->GetMenu())) {
+					PRINT(("Error removing encoder menu.\n"));
+				}
+				settings->SetEncoder(NULL);
+				unload_add_on(encoderAddon);
+				encoderAddon = 0;
+			}
+		}
+
+		int32 numItems = encoderMenu->CountItems();
+		for (int32 i = 0; i < numItems; i++) {
+			BMenuItem* item = encoderMenu->RemoveItem((int32)0);
+			delete item;
+		}
+
+		BDirectory addonDir(settings->AddOnsDirectory());
+		if (addonDir.InitCheck() == B_OK) {
+			BEntry entry;
+			addonDir.Rewind();
+			char shortcut = '1';
+			image_id addon = 0;
+			while (addonDir.GetNextEntry(&entry) == B_OK) {
+				if (entry.IsFile()) {
+					BMessage* itemMsg = new BMessage(MENU_ITEM_SELECTED);
+					entry_ref ref;
+					entry.GetRef(&ref);
+					itemMsg->AddRef("addon", &ref);
+					BPath path(&ref);
+					addon = load_add_on(path.Path());
+					if (addon > 0) {
+						AEEncoder*(*load_encoder)();
+						if (get_image_symbol(addon, "load_encoder",
+											 B_SYMBOL_TYPE_TEXT, (void**)&load_encoder) == B_OK) {
+							AEEncoder* encoder = (*load_encoder)();
+							encoderMenu->AddItem(new BMenuItem(encoder->GetName(),
+															   itemMsg, shortcut, B_OPTION_KEY));
+							shortcut++;
+							delete encoder;
+						}
+						unload_add_on(addon);
+					}
+				}
+			}
+		}
+
+		BMenuItem* item = encoderMenu->FindItem(settings->EncoderName());
+		if (item) {
+			item->SetMarked(true);
+		} else {
+			item = encoderMenu->ItemAt(0);
+			if (item) {
+				item->SetMarked(true);
+			}
+		}
+
+		item = encoderMenu->FindMarked();
+		if (item) {
+			BMessage* refMsg = item->Message();
+			entry_ref ref;
+			if (refMsg->FindRef("addon", &ref) == B_OK) {
+				PRINT(("FOUND ADDON REF\n"));
+				BPath path(&ref);
+				if (path.InitCheck() == B_OK) {
+					PRINT(("GOOD ADDON PATH\n"));
+					encoderAddon = load_add_on(path.Path());
+					if (encoderAddon > 0) {
+						PRINT(("LOADED ADDON\n"));
+						AEEncoder*(*load_encoder)();
+						if (get_image_symbol(encoderAddon, "load_encoder",
+											 B_SYMBOL_TYPE_TEXT, (void**)&load_encoder) == B_OK) {
+							PRINT(("FOUND load_encoder\n"));
+							AEEncoder* encoder = (*load_encoder)();
+							settings->SetEncoder(encoder);
+							settings->SaveSettings();
+							menuBar->AddItem(new BMenuItem(encoder->GetMenu()));
+						}
+					}
+				}
+			}
+		}
+
+		if (encoderMenu->CountItems() == 0) {
+			encoderMenu->AddItem(new BMenuItem(NO_AVAILABLE_ENCODERS, NULL));
+		}
+	}
+}
+
+void
+AppWindow::MenuItemSelected(BMessage* message)
+{
+	PRINT(("AppWindow::MenuItemSelected(BMessage*)\n"));
+
+	BMenuItem* item;
+	message->FindPointer("source", (void**)&item);
+	BMenu* menu = item->Menu();
+
+	if (menu) {
+		if (strcmp(menu->Name(), FILE_MENU) == 0) {
+		} else if (strcmp(menu->Name(), EDIT_MENU) == 0) {
+			if (strcmp(item->Label(), SELECT_ALL) == 0) {
+				BMessage msg(SELECT_ALL_MSG);
+				viewMessenger->SendMessage(&msg);
+			} else if (strcmp(item->Label(), DESELECT_ALL) == 0) {
+				BMessage msg(DESELECT_ALL_MSG);
+				viewMessenger->SendMessage(&msg);
+			} else if (strcmp(item->Label(), REMOVE) == 0) {
+				BMessage msg(REMOVE_MSG);
+				viewMessenger->SendMessage(&msg);
+			} else if (strcmp(item->Label(), SAVE_LAYOUT) == 0) {
+				BMessage msg(SAVE_LAYOUT_MSG);
+				viewMessenger->SendMessage(&msg);
+			} else if (strcmp(item->Label(), PREFS) == 0) {
+				BMessage msg(PREFS_MSG);
+				viewMessenger->SendMessage(&msg);
+			}
+		} else if (strcmp(menu->Name(), LOAD_CD_SUBMENU) == 0) {
+			PRINT(("CD SELECTED: %s\n", item->Label()));
+			dev_t dev;
+			if (message->FindInt32("dev", &dev) == B_OK) {
+				AddVolumeToList(dev);
+			} else {
+				AddVolumeToList(item->Label());
+			}
+		} else if (strcmp(menu->Name(), ENCODER_MENU) == 0) {
+			if (!settings->IsEncoding()) {
+				PRINT(("ENCODER SELECTED: %s\n", item->Label()));
+
+				if (encoderAddon > 0) {
+					AEEncoder* encoder = settings->Encoder();
+					if (encoder) {
+						if (!menuBar->RemoveItem(encoder->GetMenu())) {
+							PRINT(("Error removing encoder menu.\n"));
+						}
+						settings->SetEncoder(NULL);
+						unload_add_on(encoderAddon);
+						encoderAddon = 0;
+					}
+				}
+				entry_ref ref;
+				if (message->FindRef("addon", &ref) == B_OK) {
+					BPath path(&ref);
+					if (path.InitCheck() == B_OK) {
+						encoderAddon = load_add_on(path.Path());
+						if (encoderAddon > 0) {
+							AEEncoder*(*load_encoder)();
+							if (get_image_symbol(encoderAddon, "load_encoder",
+												 B_SYMBOL_TYPE_TEXT, (void**)&load_encoder) == B_OK) {
+								AEEncoder* encoder = (*load_encoder)();
+								settings->SetEncoder(encoder);
+								menuBar->AddItem(encoder->GetMenu());
+							}
+						}
+					}
+				}
+				BMessage msg(ENCODER_CHANGED);
+				viewMessenger->SendMessage(&msg);
+			}
+		} else {
+			if (!settings->IsEncoding()) {
+				item->SetMarked(!item->IsMarked());
+			}
+		}
+	}
+}
+
+void
+AppWindow::AddVolumeToList(const char* name)
+{
+	PRINT(("AppWindow::AddVolumeToList(const char*)\n"));
+
+	if (!fCdOperationsAllowed) {
+		return;
+	}
+
+	volumes->Rewind();
+	BVolume volume;
+	while (volumes->GetNextVolume(&volume) == B_OK) {
+		char volume_name[B_FILE_NAME_LENGTH];
+		volume.GetName(volume_name);
+		if (strcmp(volume_name, name) == 0) {
+			AddVolumeToList(volume.Device());
+			break;
+		}
+	}
+}
+
+void
+AppWindow::AddVolumeToList(dev_t device)
+{
+	PRINT(("AppWindow::AddVolumeToList(dev_t)\n"));
+
+	if (!fCdOperationsAllowed) {
+		return;
+	}
+
+	BVolume volume(device);
+	BDirectory dir;
+	volume.GetRootDirectory(&dir);
+	
+	if (dir.InitCheck() == B_OK) {
+		BMessage refMsg(B_REFS_RECEIVED);
+		entry_ref ref;
+		dir.Rewind();
+		while (dir.GetNextRef(&ref) == B_OK) {
+			refMsg.AddRef("refs", &ref);
+		}
+		viewMessenger->SendMessage(&refMsg);
+#if ENABLE_MUSICBRAINZ_LOOKUP
+		fs_info info;
+		if ((fs_stat_dev(volume.Device(), &info) == B_OK)
+				&& (strcmp(info.fsh_name, "cdda") == 0)) {
+			char volumeName[B_FILE_NAME_LENGTH];
+			volume.GetName(volumeName);
+			// Each track of the disc is a file in the volume's root, so
+			// the number of refs is the number of tracks - more reliable
+			// than the count libdiscid works out from the table of
+			// contents, which came up one short for a 9 track disc.
+			// (CountNames() would count fields, not the refs in them.)
+			type_code refType;
+			int32 trackCount = 0;
+			if (refMsg.GetInfo("refs", &refType, &trackCount) != B_OK)
+				trackCount = 0;
+			MusicBrainzLookup::FetchAsync(info.device_name, volumeName,
+				trackCount, viewMessenger);
+		}
+#endif
+	}
+}
+
+void
+AppWindow::AboutRequested()
+{
+	PRINT(("AppWindow::AboutRequested()\n"));
+
+	BAboutWindow* about = new BAboutWindow(APPLICATION, SIGNATURE);
+	app_info info;
+	if (be_app->GetAppInfo(&info) == B_OK) {
+		BFile file(&info.ref, B_READ_ONLY);
+		BAppFileInfo appFileInfo(&file);
+		version_info versionInfo;
+		if (appFileInfo.GetVersionInfo(&versionInfo, B_APP_VERSION_KIND)
+				== B_OK) {
+			BString version;
+			version << versionInfo.major << "." << versionInfo.middle
+				<< "." << versionInfo.minor;
+			if (versionInfo.variety != B_FINAL_VERSION) {
+				const char* varietyNames[] =
+					{VERSION_VARIETY_DEVELOPMENT_TXT, VERSION_VARIETY_ALPHA_TXT,
+					VERSION_VARIETY_BETA_TXT, VERSION_VARIETY_GAMMA_TXT,
+					VERSION_VARIETY_GOLDEN_MASTER_TXT};
+				version << " (" << varietyNames[versionInfo.variety] << ")";
+			}
+			about->SetVersion(version.String());
+		}
+	}
+	about->AddExtraInfo(COMPANY_WWW);
+	about->AddExtraInfo(COMPANY);
+	about->Show();
+}
+
+void
+AppWindow::FrameResized(float width, float height)
+{
+#ifdef DEBUG
+	BString title = APPLICATION;
+	title << " WIDTH=";
+	title << width;
+	title << " HEIGHT=";
+	title << height;
+	SetTitle(title.String());
+#endif
+}
+
+void
+AppWindow::MessageReceived(BMessage* message) 
+{
+	//PRINT(("AppWindow::MessageReceived(BMessage*)\n"));
+
+	switch (message->what) {
+		case B_NODE_MONITOR: {
+				int32 opcode;
+				message->FindInt32("opcode", &opcode);
+				switch (opcode) {
+					case B_ENTRY_CREATED:
+					case B_ENTRY_REMOVED:
+						LoadEncoderMenu();
+						break;
+					case B_ENTRY_MOVED: {
+							BDirectory addonDir(settings->AddOnsDirectory());
+							node_ref addon_ref;
+							addonDir.GetNodeRef(&addon_ref);
+
+							dev_t device;
+							message->FindInt32("device", &device);
+							PRINT(("DEVICE FROM MSG = %d\n", device));
+
+							ino_t from_node_num;
+							message->FindInt64("from directory", &from_node_num);
+
+							ino_t to_node_num;
+							message->FindInt64("to directory", &to_node_num);
+
+							if ((addon_ref.device == device)
+									&& ((addon_ref.node == from_node_num)
+										|| (addon_ref.node == to_node_num))) {
+								LoadEncoderMenu();
+							} else {
+								LoadCDMenu();
+								viewMessenger->SendMessage(message);
+							}
+						}
+						break;
+					case B_DEVICE_MOUNTED: {
+							dev_t dev;
+							message->FindInt32("new device", &dev);
+							BVolume vol(dev);
+							BDirectory root;
+							vol.GetRootDirectory(&root);
+							node_ref nref;
+							root.GetNodeRef(&nref);
+							watch_node(&nref, B_WATCH_NAME, this);
+						}
+						LoadCDMenu();
+						break;
+					case B_DEVICE_UNMOUNTED: {
+							dev_t dev;
+							message->FindInt32("device", &dev);
+							BMessage msg(REMOVE_MSG);
+							msg.AddInt32("device", dev);
+							viewMessenger->SendMessage(&msg);
+						}
+						LoadCDMenu();
+						break;
+				}
+			}
+			break;
+		case MENU_ITEM_SELECTED:
+			MenuItemSelected(message);
+			break;
+		case FILE_NAME_PATTERN_CHANGED:
+			viewMessenger->SendMessage(message);
+			break;
+		case B_ABOUT_REQUESTED:
+			AboutRequested();
+			break;
+		case B_REFS_RECEIVED:
+			RefsReceived(message);
+			break;
+		case LOAD_CD_BUTTON_PRESSED:
+			LoadFirstMountedCd();
+			break;
+		// TagKit's compact view posts these to the window it's in.
+		case COVER_ART_CONTEXT:
+		case FIELD_EDIT_REQUESTED:
+			viewMessenger->SendMessage(message);
+			break;
+		default:
+			BWindow::MessageReceived(message);
+	}
+}
+
+void
+AppWindow::RefsReceived(BMessage* message)
+{
+	PRINT(("AppWindow::RefsReceived(BMessage*)\n"));
+
+	viewMessenger->SendMessage(message);
+}
+
+bool
+AppWindow::QuitRequested()
+{
+	PRINT(("AppWindow::QuitRequested()\n"));
+
+	if (settings->IsEncoding()) {
+		return false;
+	}
+
+	if (encoderAddon > 0) {
+		AEEncoder* encoder = settings->Encoder();
+		if (encoder) {
+			if (!menuBar->RemoveItem(encoder->GetMenu())) {
+				PRINT(("Error removing encoder menu.\n"));
+			}
+			settings->SetEncoder(NULL);
+			unload_add_on(encoderAddon);
+			encoderAddon = 0;
+		}
+	}
+
+	be_app->PostMessage(B_QUIT_REQUESTED);
+
+	return true;
+}
+
+AppWindow*
+AppWindow::GetInstance()
+{
+	PRINT(("AppWindow::GetInstance()\n"));
+	
+	AppWindow* win = 0;
+	
+	Settings::OpenSettings();
+	PRINT_OBJECT(*settings);
+
+	win = new AppWindow();
+
+	return(win);
+}
