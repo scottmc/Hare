@@ -330,16 +330,17 @@ PrefWindow::InitWindow()
 			.Add(commentStringView, 0, 2)
 		.End()
 		.Add(fileNamePatternTextControl)
-	.End();
-	
-	BLayoutBuilder::Group<>(this, B_VERTICAL)
-		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
-		.Add(fileNamePatternBox, 0.0f)
+		// The buttons are in the box: they're for the pattern in it.
 		.AddGroup(B_HORIZONTAL)
 			.Add(revertButton, 0.0f)
 			.Add(encoderPatternButton, 0.0f)
 			.Add(applyButton, 1.0f)
 		.End()
+	.End();
+	
+	BLayoutBuilder::Group<>(this, B_VERTICAL)
+		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
+		.Add(fileNamePatternBox, 0.0f)
 		.Add(InitTaggingBox(), 0.0f)
 	.End();				
 }
