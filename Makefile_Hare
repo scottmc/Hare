@@ -75,7 +75,7 @@ RSRCS = \
 #	- 	if your library does not follow the standard library naming scheme,
 #		you need to specify the path to the library and it's name.
 #		(e.g. for mylib.a, specify "mylib.a" or "path/mylib.a")
- LIBS = $(STDCPPLIBS) hare tag be game media tracker columnlistview \
+ LIBS = $(STDCPPLIBS) hare be game media tracker columnlistview \
  	translation discid localestub $(TAGKIT_LIBS)
 
 #	Specify additional paths to directories following the standard libXXX.so
@@ -89,8 +89,6 @@ LIBPATHS = objects_libhare
 #	"#include <header>". Directories that contain the files in SRCS are
 #	NOT auto-included here.
 SYSTEM_INCLUDE_PATHS = $(shell findpaths -e B_FIND_PATH_HEADERS_DIRECTORY private/interface) \
-	/boot/system/develop/headers/taglib \
-	$(wildcard /boot/system/develop/headers/$(shell getarch)/taglib) \
 	$(TAGKIT_SYSTEM_INCLUDE_PATHS)
 
 #	Additional paths paths to look for local headers. These use the form

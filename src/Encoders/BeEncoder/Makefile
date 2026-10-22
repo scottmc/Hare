@@ -69,8 +69,7 @@ LIBPATHS = ${Hare-Root-Dir}/objects_libhare
 #	Additional paths to look for system headers. These use the form
 #	"#include <header>". Directories that contain the files in SRCS are
 #	NOT auto-included here.
-SYSTEM_INCLUDE_PATHS = $(shell findpaths -e B_FIND_PATH_HEADERS_DIRECTORY taglib) \
-	$(wildcard /boot/system/develop/headers/$(shell getarch)/taglib)
+SYSTEM_INCLUDE_PATHS =
 
 #	Additional paths paths to look for local headers. These use the form
 #	#include "header". Directories that contain the files in SRCS are

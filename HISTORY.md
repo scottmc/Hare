@@ -7,3 +7,4 @@ History of Hare
 2009-2013 Moved to OSDrawer and renamed Hare (Haiku Audio Ripper Encoder)
 2013-2021 Hare was moved to HaikuArchives on GitHub
 
+2026 Tags, cover art and MusicBrainz lookups moved to TagKit (a shared set of tagging pieces, also used by TagView)
