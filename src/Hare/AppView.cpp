@@ -160,7 +160,10 @@ AppView::InitView()
 	// The tag square is twice as wide as the cover square (TagKit's widest
 	// setting): the long names and titles of an album need the room.
 	compactView->SetInfoWidthRatio(2.0f);
-	compactView->SetMinimumViewSize(360.0f, 125.0f);
+	// As low as 125; as narrow as the squares need at that height, so the
+	// window can be squeezed until they are as near its sides as its top.
+	compactView->SetMinimumViewSize(100.0f, 125.0f);
+	compactView->SetMinimumWidthFromHeight(true);
 	compactView->SetExplicitMaxSize(
 		BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 	compactView->SetEditMessage(new BMessage(FIELD_EDIT_REQUESTED));
@@ -182,7 +185,9 @@ AppView::InitView()
 	cancelButton->SetEnabled(false);
 
 	listView = new EncoderListView();
-	listView->SetExplicitMinSize(BSize(0, 125));
+	// Room for the header, the scroll bar and three rows. Squeezing the
+	// splitter below that collapses the list altogether (see below).
+	listView->SetExplicitMinSize(BSize(0, 90));
 	listView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
 	BString remaining(STATUS_TRAILING_LABEL);
@@ -225,6 +230,12 @@ AppView::InitView()
 			.End()
 		.End()
 	.End();
+
+	// The tags and cover art always stay; the list can be dragged shut with
+	// the splitter, for the ones who only want the compact view. (It opens
+	// again by dragging the splitter back.)
+	mainSplitView->SetCollapsible(0, false);
+	mainSplitView->SetCollapsible(1, true);
 }
 
 void
@@ -2597,6 +2608,7 @@ AppView::SaveLayout()
 	if (mainSplitView && (mainSplitView->CountChildren() == 2)) {
 		layout.AddFloat("mainSplitWeight", mainSplitView->ChildAt(0)->Frame().Height());
 		layout.AddFloat("mainSplitWeight", mainSplitView->ChildAt(1)->Frame().Height());
+		layout.AddBool("listCollapsed", mainSplitView->IsItemCollapsed(1));
 	}
 
 	settings->SetLayoutState(&layout);
@@ -2617,6 +2629,13 @@ AppView::RestoreLayout()
 			&& (layout->FindFloat("mainSplitWeight", 1, &weight1) == B_OK)) {
 		mainSplitView->SetItemWeight(0, weight0, false);
 		mainSplitView->SetItemWeight(1, weight1, true);
+	}
+
+	bool listCollapsed = false;
+	if (mainSplitView
+			&& layout->FindBool("listCollapsed", &listCollapsed) == B_OK
+			&& listCollapsed) {
+		mainSplitView->SetItemCollapsed(1, true);
 	}
 }
 
