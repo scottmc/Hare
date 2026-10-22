@@ -669,7 +669,7 @@ AppView::InitializeColumn(BRefRow* row)
 
 		// A track added after MusicBrainz answered (ApplyMusicBrainzYear()
 		// only reaches the rows there were by then).
-		if (mbYear.Length() > 0) {
+		if (mbYear.Length() > 0 && settings->Option(PREF_FILL_YEAR)) {
 			row->SetField(new BStringField(mbYear.String()),
 				YEAR_COLUMN_INDEX);
 		}
@@ -958,7 +958,8 @@ AppView::HandleFieldEditRequested(BMessage* message)
 	// An editor still open accepts its text and closes itself when it loses
 	// the focus to this click, so a new one can just be started.
 	fieldEditor = tagkit::new_field_editor(BMessenger(this), result,
-		(tagkit::tag_field)fieldNumber, records, where, width, NULL);
+		(tagkit::tag_field)fieldNumber, records, where, width,
+		&settings->RecentGenres());
 	fieldEditor->Show();
 }
 
@@ -979,6 +980,10 @@ AppView::HandleFieldEdited(BMessage* message)
 	void* pointer = NULL;
 	for (int32 i = 0; message->FindPointer("row", i, &pointer) == B_OK; i++)
 		rows.push_back(pointer);
+
+	// A genre picked is remembered for the top of the genre menu.
+	if (fieldNumber == tagkit::TAG_FIELD_GENRE && value.Length() > 0)
+		settings->AddRecentGenre(value.String());
 
 	int32 changed = pendingEdits.SetField(rows,
 		(tagkit::tag_field)fieldNumber, value);
@@ -1007,7 +1012,7 @@ AppView::CloseFieldEditor()
 void
 AppView::ApplyMusicBrainzYear()
 {
-	if (mbYear.Length() == 0)
+	if (mbYear.Length() == 0 || !settings->Option(PREF_FILL_YEAR))
 		return;
 
 	// Only a blank year is filled in: one typed or read from the file wins.
@@ -1926,6 +1931,21 @@ AppView::EncodeThread(void* args)
 	// mid-encode, so there's no need to keep re-locking to read it as each
 	// track finishes.
 	CoverArtBuffer coverArt;
+	tagkit::CoverArtImage selectedImage;
+	// The tagging preferences, as they are as this run starts. Settings is
+	// only changed from the interface thread, and a run's options shouldn't
+	// change under it anyway.
+	TaggingOptions options;
+	options.writeTags = settings->Option(PREF_WRITE_TAGS);
+	options.embedCoverArt = options.writeTags
+		&& settings->Option(PREF_EMBED_COVER_ART);
+	options.tagMusicBrainzIds = options.writeTags
+		&& settings->Option(PREF_TAG_MUSICBRAINZ_IDS);
+	options.writeAttributes = settings->Option(PREF_WRITE_ATTRIBUTES);
+	options.attributeMusicBrainzIds = options.writeAttributes
+		&& settings->Option(PREF_ATTRIBUTE_MUSICBRAINZ_IDS);
+	options.saveCoverFile = settings->Option(PREF_SAVE_COVER_FILE);
+	options.coverFileMimeType = settings->CoverFileMimeType();
 	BString mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId;
 	BObjectList<TrackMBMetadata, true> mbTrackMetadata(20);
 	if (view->LockLooper()) {
@@ -1940,6 +1960,7 @@ AppView::EncodeThread(void* args)
 				coverArt.SetTo(&image.data[0], image.data.size(),
 					tagkit::image_extension_for_mime_type(
 						image.mimeType.String()));
+				selectedImage = image;
 			}
 		}
 		mbDiscId = view->mbDiscId;
@@ -1957,6 +1978,24 @@ AppView::EncodeThread(void* args)
 			}
 		}
 		view->UnlockLooper();
+	}
+
+	// The cover file is saved in the format chosen in the preferences: the
+	// image's own bytes when it's already that, else re-encoded by a
+	// translator. If that doesn't work the original is saved as it is.
+	CoverArtBuffer coverFile;
+	if (options.saveCoverFile && coverArt.HasData()) {
+		std::vector<unsigned char> converted;
+		if (tagkit::encode_cover_art(selectedImage,
+				options.coverFileMimeType.String(), converted) == B_OK
+				&& !converted.empty()) {
+			coverFile.SetTo(&converted[0], converted.size(),
+				tagkit::image_extension_for_mime_type(
+					options.coverFileMimeType.String()));
+		} else {
+			coverFile.SetTo(coverArt.Data(), coverArt.Size(),
+				coverArt.Extension());
+		}
 	}
 
 	// Tracks whose tags TagKit couldn't write after encoding (the audio
@@ -2496,9 +2535,9 @@ AppView::EncodeThread(void* args)
 			view->UnlockLooper();
 		}
 
-		if (coverArt.HasData()) {
-			view->WriteCoverArt(outputParent, coverArt.Data(), coverArt.Size(),
-				coverArt.Extension());
+		if (coverFile.HasData()) {
+			view->WriteCoverArt(outputParent, coverFile.Data(),
+				coverFile.Size(), coverFile.Extension());
 		}
 
 		BString tagError;
@@ -2506,7 +2545,7 @@ AppView::EncodeThread(void* args)
 				haveTrack ? atol(track.String()) : 0, genre,
 				coverArt.Data(), coverArt.Size(), coverArt.Extension(),
 				mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId,
-				&mbTrackMetadata, &tagError)) {
+				&mbTrackMetadata, options, &tagError)) {
 			if (tagFailures == 0) {
 				firstTagError = tagError;
 			}
@@ -2756,7 +2795,7 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 	const BString& discId, const BString& releaseId,
 	const BString& releaseGroupId, const BString& artistId,
 	const BObjectList<TrackMBMetadata, true>* trackMetadata,
-	BString* errorMessage)
+	const TaggingOptions& options, BString* errorMessage)
 {
 	PRINT(("AppView::WriteTags(const BPath&, ...)\n"));
 
@@ -2807,22 +2846,29 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 		}
 	}
 
-	// The ids go into the file's tags only if that's switched on (see
-	// AppDefs.h); the attributes below still get them either way.
-	tagkit::TagRecord tagRecord = record;
-#if !WRITE_MUSICBRAINZ_ID_TAGS
-	tagRecord.musicBrainz = tagkit::MusicBrainzIds();
-#endif
+	// What goes into the file's tags is up to the preferences; the
+	// attributes below are written from the whole record (and have their own
+	// setting for the ids).
+	if (options.writeTags) {
+		tagkit::TagRecord tagRecord = record;
+		if (!options.embedCoverArt)
+			tagRecord.newCoverArt.reset();
+		if (!options.tagMusicBrainzIds)
+			tagRecord.musicBrainz = tagkit::MusicBrainzIds();
 
-	BString writeError;
-	if (!tagkit::write_tags(tagRecord, &writeError)) {
-		PRINT(("AppView::WriteTags: couldn't write tags to %s: %s\n",
-			outputPath.Path(), writeError.String()));
-		if (errorMessage) {
-			*errorMessage = writeError;
+		BString writeError;
+		if (!tagkit::write_tags(tagRecord, &writeError)) {
+			PRINT(("AppView::WriteTags: couldn't write tags to %s: %s\n",
+				outputPath.Path(), writeError.String()));
+			if (errorMessage) {
+				*errorMessage = writeError;
+			}
+			return false;
 		}
-		return false;
 	}
+
+	if (!options.writeAttributes)
+		return true;
 
 	// The same tags as Haiku attributes (what Tracker shows as columns),
 	// with the "Audio:" names Hare has always used. The encoder add-ons
@@ -2832,9 +2878,7 @@ AppView::WriteTags(const BPath& outputPath, const BString& artist,
 	// themselves are already safely written.
 	tagkit::AttributeOptions attributeOptions;
 	attributeOptions.naming = tagkit::ATTRIBUTE_NAMES_AUDIO;
-#if WRITE_MUSICBRAINZ_ID_ATTRIBUTES
-	attributeOptions.musicBrainzIds = true;
-#endif
+	attributeOptions.musicBrainzIds = options.attributeMusicBrainzIds;
 	status_t attributeStatus = tagkit::copy_tags_to_attributes(record, NULL,
 		attributeOptions);
 	if (attributeStatus != B_OK) {

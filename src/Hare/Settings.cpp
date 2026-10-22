@@ -23,6 +23,14 @@
 
 Settings* settings = 0;
 
+// The names the options are stored under, in pref_option order.
+static const char* const kOptionNames[PREF_OPTION_COUNT] = {
+	"writeTags", "embedCoverArt", "tagMusicBrainzIds", "writeAttributes",
+	"attributeMusicBrainzIds", "saveCoverFile", "useMusicBrainz", "fillYear"
+};
+
+#define DEFAULT_COVER_MIME_TYPE "image/jpeg"
+
 #define DEFAULT_ENCODER "BeEncoder"
 #define DEFAULT_PATHPATTERN "/boot/home/Encoded/%t.mp3"
 
@@ -31,6 +39,8 @@ Settings::Settings()
 	BArchivable()
 {
 	PRINT(("Settings::Settings()\n"));
+
+	InitDefaults();
 
 //	windowFrame = BRect(50, 50, 50, 50);
 	encoding = false;
@@ -54,6 +64,22 @@ Settings::Settings(BMessage* archive)
 	BArchivable(archive)
 {
 	PRINT(("Settings::Settings(BMessage*)\n"));
+
+	InitDefaults();
+	for (int32 i = 0; i < PREF_OPTION_COUNT; i++)
+		archive->FindBool(kOptionNames[i], &options[i]);
+
+	BString mimeType;
+	if (archive->FindString("coverFileMimeType", &mimeType) == B_OK
+			&& mimeType.Length() > 0) {
+		coverFileMimeType = mimeType;
+	}
+
+	BString genre;
+	for (int32 i = 0; i < kMaxRecentGenres
+			&& archive->FindString("recentGenre", i, &genre) == B_OK; i++) {
+		recentGenres.push_back(genre);
+	}
 
 	status_t status;
 	BString tmp;
@@ -159,6 +185,12 @@ Settings::Archive(BMessage* archive, bool deep) const
 	if (status == B_OK) {
 		status = archive->AddMessage("layoutState", &layoutState);
 	}
+	for (int32 i = 0; status == B_OK && i < PREF_OPTION_COUNT; i++)
+		status = archive->AddBool(kOptionNames[i], options[i]);
+	if (status == B_OK)
+		status = archive->AddString("coverFileMimeType", coverFileMimeType);
+	for (size_t i = 0; status == B_OK && i < recentGenres.size(); i++)
+		status = archive->AddString("recentGenre", recentGenres[i]);
 
 	return status;
 }
@@ -232,6 +264,73 @@ BMessage*
 Settings::LayoutState()
 {
 	return &layoutState;
+}
+
+
+void
+Settings::InitDefaults()
+{
+	for (int32 i = 0; i < PREF_OPTION_COUNT; i++)
+		options[i] = true;
+	coverFileMimeType = DEFAULT_COVER_MIME_TYPE;
+}
+
+
+bool
+Settings::Option(pref_option option) const
+{
+	return options[option];
+}
+
+
+void
+Settings::SetOption(pref_option option, bool value)
+{
+	options[option] = value;
+}
+
+
+const char*
+Settings::CoverFileMimeType() const
+{
+	return coverFileMimeType.String();
+}
+
+
+void
+Settings::SetCoverFileMimeType(const char* mimeType)
+{
+	if (mimeType != NULL && mimeType[0] != '\0')
+		coverFileMimeType = mimeType;
+}
+
+
+const std::vector<BString>&
+Settings::RecentGenres() const
+{
+	return recentGenres;
+}
+
+
+void
+Settings::AddRecentGenre(const char* genre)
+{
+	if (genre == NULL || genre[0] == '\0')
+		return;
+
+	// Already in the list: take it out so it can go to the front.
+	for (size_t i = 0; i < recentGenres.size(); i++) {
+		if (recentGenres[i].ICompare(genre) == 0) {
+			recentGenres.erase(recentGenres.begin() + i);
+			break;
+		}
+	}
+
+	recentGenres.insert(recentGenres.begin(), BString(genre));
+	if ((int32)recentGenres.size() > kMaxRecentGenres)
+		recentGenres.resize(kMaxRecentGenres);
+
+	SaveSettings();
 }
 
 

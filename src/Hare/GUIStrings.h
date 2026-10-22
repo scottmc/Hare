@@ -61,6 +61,16 @@
 #define FILE_NAME_PATTERN_BOX_LABEL B_TRANSLATE_CONTEXT("File Path and Name Pattern", "GUIStrings")
 #define FILE_NAME_PATTERN_BOX_LABEL_FOR B_TRANSLATE_CONTEXT("File Path and Name Pattern for ", "GUIString")
 
+#define TAGGING_BOX_LABEL B_TRANSLATE_CONTEXT("Tagging and Attributes", "GUIStrings")
+#define PREF_WRITE_TAGS_TXT B_TRANSLATE_CONTEXT("Write tags into the encoded files", "GUIStrings")
+#define PREF_EMBED_COVER_ART_TXT B_TRANSLATE_CONTEXT("Embed the cover art in the tags", "GUIStrings")
+#define PREF_TAG_MUSICBRAINZ_IDS_TXT B_TRANSLATE_CONTEXT("Include the MusicBrainz IDs in the tags", "GUIStrings")
+#define PREF_WRITE_ATTRIBUTES_TXT B_TRANSLATE_CONTEXT("Write the tags as file attributes", "GUIStrings")
+#define PREF_ATTRIBUTE_MUSICBRAINZ_IDS_TXT B_TRANSLATE_CONTEXT("Include the MusicBrainz IDs in the attributes", "GUIStrings")
+#define PREF_SAVE_COVER_FILE_TXT B_TRANSLATE_CONTEXT("Save the cover art as an image file next to the tracks", "GUIStrings")
+#define PREF_COVER_FORMAT_LABEL B_TRANSLATE_CONTEXT("Image format:", "GUIStrings")
+#define PREF_USE_MUSICBRAINZ_TXT B_TRANSLATE_CONTEXT("Look up discs and cover art on MusicBrainz", "GUIStrings")
+#define PREF_FILL_YEAR_TXT B_TRANSLATE_CONTEXT("Fill in an empty year from the MusicBrainz release", "GUIStrings")
 #define FIELD_NUMBER_INVALID_TXT B_TRANSLATE_CONTEXT("The track and the year must be blank or a whole number (up to 9999).", "GUIStrings")
 
 #define REMOVED_TXT B_TRANSLATE_CONTEXT("One or more items in the list have been deleted.\nEncoding has been canceled.", "GUIStrings")

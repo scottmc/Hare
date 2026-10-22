@@ -32,6 +32,10 @@
 // compactView asks for a field to be edited / the field editor's result.
 #define FIELD_EDIT_REQUESTED '040'
 #define FIELD_EDITED '041'
+// A checkbox of the preferences window's Tagging and Attributes box
+// ("option" is the pref_option) / its cover image format menu ("mime").
+#define PREF_OPTION_CHANGED '042'
+#define PREF_COVER_FORMAT '043'
 
 // Cap on how many MusicBrainz cover-art candidates get fetched and
 // offered to the user to choose between - see TagKit's

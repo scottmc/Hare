@@ -49,6 +49,19 @@ struct TrackMBMetadata {
 	BString recordingId;
 };
 
+// What WriteTags() should write, as set in the preferences. Read once when
+// an encode run starts, so one run is consistent even if the preferences
+// change meanwhile.
+struct TaggingOptions {
+	bool writeTags;
+	bool embedCoverArt;
+	bool tagMusicBrainzIds;
+	bool writeAttributes;
+	bool attributeMusicBrainzIds;
+	bool saveCoverFile;
+	BString coverFileMimeType;
+};
+
 class AppView : public BView, public tagkit::EditHost {
 public:
 	AppView();
@@ -90,7 +103,7 @@ private:
 		const BString& releaseId, const BString& releaseGroupId,
 		const BString& artistId,
 		const BObjectList<TrackMBMetadata, true>* trackMetadata,
-		BString* errorMessage = NULL);
+		const TaggingOptions& options, BString* errorMessage = NULL);
 	// Shows the selected rows (none, one or several) in compactView.
 	void RefreshCompactView();
 	// A FIELD_EDIT_REQUESTED message from compactView: opens the field

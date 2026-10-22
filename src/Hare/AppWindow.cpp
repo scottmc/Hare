@@ -566,7 +566,8 @@ AppWindow::AddVolumeToList(dev_t device)
 		viewMessenger->SendMessage(&refMsg);
 #if ENABLE_MUSICBRAINZ_LOOKUP
 		fs_info info;
-		if ((fs_stat_dev(volume.Device(), &info) == B_OK)
+		if (settings->Option(PREF_USE_MUSICBRAINZ)
+				&& (fs_stat_dev(volume.Device(), &info) == B_OK)
 				&& (strcmp(info.fsh_name, "cdda") == 0)) {
 			char volumeName[B_FILE_NAME_LENGTH];
 			volume.GetName(volumeName);
