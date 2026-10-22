@@ -1991,24 +1991,6 @@ AppView::EncodeThread(void* args)
 		view->UnlockLooper();
 	}
 
-	// The cover file is saved in the format chosen in the preferences: the
-	// image's own bytes when it's already that, else re-encoded by a
-	// translator. If that doesn't work the original is saved as it is.
-	CoverArtBuffer coverFile;
-	if (options.saveCoverFile && coverArt.HasData()) {
-		std::vector<unsigned char> converted;
-		if (tagkit::encode_cover_art(selectedImage,
-				options.coverFileMimeType.String(), converted) == B_OK
-				&& !converted.empty()) {
-			coverFile.SetTo(&converted[0], converted.size(),
-				tagkit::image_extension_for_mime_type(
-					options.coverFileMimeType.String()));
-		} else {
-			coverFile.SetTo(coverArt.Data(), coverArt.Size(),
-				coverArt.Extension());
-		}
-	}
-
 	// Tracks whose tags TagKit couldn't write after encoding (the audio
 	// itself is fine); reported once at the end of the run.
 	int32 tagFailures = 0;
@@ -2546,9 +2528,12 @@ AppView::EncodeThread(void* args)
 			view->UnlockLooper();
 		}
 
-		if (coverFile.HasData()) {
-			view->WriteCoverArt(outputParent, coverFile.Data(),
-				coverFile.Size(), coverFile.Extension());
+		// cover.<ext> next to the track, in the format chosen in the
+		// preferences. TagKit leaves one that's already there alone, so
+		// this writes it once per album folder, not once per track.
+		if (options.saveCoverFile && coverArt.HasData()) {
+			tagkit::write_cover_file(selectedImage, outputParent.Path(),
+				options.coverFileMimeType.String());
 		}
 
 		BString tagError;
@@ -2761,44 +2746,6 @@ AppView::ShowCoverArtMenu(BMessage* message)
 
 	// Asynchronous: the menu deletes itself once it has closed.
 	menu->Go(where, true, true, true);
-}
-
-
-void
-AppView::WriteCoverArt(const BPath& directory, const void* data, size_t size,
-	const BString& extension)
-{
-	PRINT(("AppView::WriteCoverArt(const BPath&, const void*, size_t, "
-		"const BString&)\n"));
-
-	if (!data || (size == 0)) {
-		return;
-	}
-
-	BString fileName("cover.");
-	fileName << extension;
-	BPath coverPath(directory.Path(), fileName.String());
-	if (coverPath.InitCheck() != B_OK) {
-		return;
-	}
-
-	// Every track of an album typically shares the same output directory,
-	// so this runs once per finished track but should only actually write
-	// the file the first time - and leaves it alone if the user (or an
-	// earlier encode) already has one there.
-	BEntry existing(coverPath.Path());
-	if (existing.Exists()) {
-		return;
-	}
-
-	BFile file(coverPath.Path(), B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
-	if (file.InitCheck() != B_OK) {
-		PRINT(("AppView::WriteCoverArt: couldn't create %s\n",
-			coverPath.Path()));
-		return;
-	}
-
-	file.Write(data, size);
 }
 
 // Writes the finished track's tags - the usual text fields, the cover art

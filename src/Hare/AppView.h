@@ -93,8 +93,6 @@ private:
 	void Cancel();
 	void AlertUser(const char* message);
 	static int32 EncodeThread(void* args);
-	void WriteCoverArt(const BPath& directory, const void* data, size_t size,
-		const BString& extension);
 	bool WriteTags(const BPath& outputPath, const BString& artist,
 		const BString& album, const BString& title, const BString& year,
 		const BString& comment, int32 trackNumber, const BString& genre,
