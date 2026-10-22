@@ -8,7 +8,6 @@
 #include <string.h>
 #include <vector>
 
-#include <Bitmap.h>
 #include <Debug.h>
 #include <Message.h>
 #include <Messenger.h>
@@ -38,7 +37,8 @@ struct FetchParams {
 
 // MAX_COVER_ART_CANDIDATES (CommandConstants.h) caps how many candidate
 // releases get their cover art fetched below and offered to the user to
-// choose between (see COVER_ART_FOUND below and CoverArtCandidatesView) -
+// choose between (see COVER_ART_FOUND below and TagKit's
+// CoverArtPickerWindow) -
 // almost always just one release, but the fallback title search below can
 // turn up several plausible matches with no good way to tell which is
 // right from metadata alone, and even an exact disc ID can legitimately
@@ -370,11 +370,10 @@ MusicBrainzLookup::FetchThread(void* args)
 	// One cover art fetch per candidate release, up to
 	// MAX_COVER_ART_CANDIDATES - each is independent, so one candidate's
 	// cover art being missing or failing to fetch doesn't stop the others
-	// from being offered. "bitmap" and "imageData" are added to msg as
-	// parallel indexed arrays (Haiku's usual BMessage idiom for this - see
-	// METADATA_FOUND's per-track fields for another example), so a
-	// candidate with no decodable bitmap still adds an explicit NULL
-	// "bitmap" entry to keep the two arrays in step with each other.
+	// from being offered. "imageData", "releaseId", "releaseTitle" and
+	// "releaseYear" are added to msg as parallel indexed arrays (Haiku's
+	// usual BMessage idiom for this - see METADATA_FOUND's per-track fields
+	// for another example); the receiver decodes the images itself.
 	if (candidates.size() > (size_t)MAX_COVER_ART_CANDIDATES)
 		candidates.resize(MAX_COVER_ART_CANDIDATES);
 
@@ -391,10 +390,11 @@ MusicBrainzLookup::FetchThread(void* args)
 		const tagkit::CoverArtImage& image = images[i];
 		if (image.data.empty())
 			continue;
-		BBitmap* bitmap = tagkit::decode_cover_art(image);
-		msg.AddPointer("bitmap", bitmap);
 		msg.AddData("imageData", B_RAW_TYPE, &image.data[0],
 			image.data.size());
+		msg.AddString("releaseId", image.releaseId);
+		msg.AddString("releaseTitle", image.releaseTitle);
+		msg.AddInt32("releaseYear", image.year);
 	}
 
 	replyTo.SendMessage(&msg);

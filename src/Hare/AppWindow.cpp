@@ -172,7 +172,7 @@ AppWindow::InitWindow()
 	// LoadCDMenu() was already called once from InitMenus() above, before
 	// appView (and viewMessenger) existed, so its CD_MOUNT_STATE_CHANGED
 	// send was skipped (see the viewMessenger check there). Call it again
-	// now so CoverArtView finds out about a CD that's already mounted at
+	// now so the cover art view finds out about a CD that's already mounted at
 	// launch, instead of only ever hearing about mounts/unmounts from
 	// here on.
 	LoadCDMenu();
@@ -315,9 +315,9 @@ AppWindow::LoadCDMenu()
 		loadCdMenu->AddItem(new BMenuItem(NO_CD_MOUNTED, NULL));
 	}
 
-	// Lets CoverArtView show or hide its own "Load CD" button (see
-	// CoverArtView::SetCdMounted()) without it having to duplicate this
-	// same cdda volume scan itself. Sent every time this menu is
+	// Lets the cover art view show or hide its "Load CD" button (see
+	// AppView's CD_MOUNT_STATE_CHANGED case) without it having to duplicate
+	// this same cdda volume scan itself. Sent every time this menu is
 	// rebuilt, which already happens both at startup and on every
 	// mount/unmount, so the button's state stays in sync for free.
 	// InitMenus() (and so this very first call) runs before InitWindow()

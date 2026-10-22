@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <Alert.h>
+#include <Application.h>
 #include <Beep.h>
 #include <Bitmap.h>
 #include <Button.h>
@@ -22,13 +23,16 @@
 #include <LayoutBuilder.h>
 #include <MenuBar.h>
 #include <Message.h>
+#include <Messenger.h>
 #include <Node.h>
 #include <NodeInfo.h>
 #include <NodeMonitor.h>
 #include <ObjectList.h>
 #include <OS.h>
 #include <Path.h>
+#include <PopUpMenu.h>
 #include <Rect.h>
+#include <Roster.h>
 #include <ScrollBar.h>
 #include <ScrollView.h>
 #include <SplitView.h>
@@ -48,6 +52,8 @@
 #include "AudioAttributes.h"
 #include "libHare/GenreList.h"
 #include "tagkit/CoverArtImage.h"
+#include "tagkit/CoverArtPickerWindow.h"
+#include "tagkit/CoverArtView.h"
 #include "tagkit/TagAttributes.h"
 #include "tagkit/TagRecord.h"
 #include "tagkit/TagWriter.h"
@@ -57,8 +63,6 @@
 #include "BarberPoleView.h"
 #include "CommandConstants.h"
 #include "CheckMark.h"
-#include "CoverArtCandidatesView.h"
-#include "CoverArtView.h"
 #include "EditorView.h"
 #include "EncoderListView.h"
 #include "GUIStrings.h"
@@ -89,10 +93,32 @@
 #define UNDERSCORE "_"
 
 
+// Hare's own icon, as Tracker shows it, for the "Load CD" button: grabbed
+// from the app file rather than bundling a second copy of the artwork just
+// for this. NULL if it can't be had; the button then just shows its label.
+static BBitmap*
+NewAppIcon()
+{
+	app_info info;
+	if (be_app->GetAppInfo(&info) != B_OK)
+		return NULL;
+
+	BFile appFile(&info.ref, B_READ_ONLY);
+	BNodeInfo nodeInfo(&appFile);
+	BBitmap* icon = new BBitmap(BRect(0, 0, 31, 31), B_RGBA32);
+	if (nodeInfo.GetTrackerIcon(icon, B_LARGE_ICON) != B_OK) {
+		delete icon;
+		return NULL;
+	}
+	return icon;
+}
+
+
 AppView::AppView()
 	:
 	BView("AppView", B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE_JUMP),
-	coverArtCandidates(NULL),
+	selectedCoverArt(0),
+	coverArtPicker(NULL),
 	fLastCheckedFreeBytes(-1),
 	fMusicBrainzLookupsPending(0),
 	mbTrackMetadata(NULL)
@@ -107,7 +133,7 @@ AppView::~AppView()
 
 	stop_watching(this);
 
-	delete coverArtCandidates;
+	CloseCoverArtPicker();
 	delete mbTrackMetadata;
 }
 
@@ -131,8 +157,20 @@ AppView::InitView()
 	editorBoxView->SetExplicitMinSize(BSize(0, 125));
 	editorBoxView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
 
-	coverArtView = new CoverArtView();
-	coverArtCandidatesView = new CoverArtCandidatesView();
+	coverArtView = new tagkit::CoverArtView("coverArtView");
+	// TagKit's view is a fixed 112 pixel square unless told otherwise; in
+	// Hare it grows and shrinks with the splitters.
+	coverArtView->SetExplicitMinSize(BSize(64.0f, 64.0f));
+	coverArtView->SetExplicitPreferredSize(BSize(150.0f, 150.0f));
+	coverArtView->SetExplicitMaxSize(
+		BSize(B_SIZE_UNLIMITED, B_SIZE_UNLIMITED));
+	// The "Load CD" button shown in place of the cover while there's none;
+	// AppWindow handles the press. It's only shown while a CD is mounted
+	// (CD_MOUNT_STATE_CHANGED below), which nothing says yet.
+	coverArtView->SetEmptyButton(LOAD_CD_BUTTON_TXT, NewAppIcon(),
+		new BMessage(LOAD_CD_BUTTON_PRESSED));
+	coverArtView->SetEmptyButtonVisible(false);
+	coverArtView->SetContextMessage(new BMessage(COVER_ART_CONTEXT));
 
 	coverArtBoxView = new BBox("coverArtBoxView");
 	coverArtBoxView->SetExplicitMinSize(BSize(100, 125));
@@ -178,66 +216,16 @@ AppView::InitView()
 		.Add(editorScrollView, 0.0f)
 	.End();
 
-	// coverArtBoxView shows one of two "cards": the single big preview
-	// (coverArtView, the common case - one cover art candidate or none)
-	// or a horizontally scrollable strip of candidate thumbnails
-	// (coverArtCandidatesView, wrapped in its own BScrollView) when
-	// MusicBrainzLookup found more than one plausible release and its
-	// cover art for each. MessageReceived()'s COVER_ART_FOUND case picks
-	// which one is visible each time new cover art candidates come in.
-	BView* coverArtCard = new BView("coverArtCard", 0);
-	BLayoutBuilder::Group<>(coverArtCard, B_HORIZONTAL)
+	BLayoutBuilder::Group<>(coverArtBoxView, B_HORIZONTAL)
 		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
 					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
 		// Needs a non-zero weight: with a weight of 0 the layout can leave
-		// the view at its 150x150 PreferredSize() even when the box is
-		// smaller (low resolution screens/small windows), so the view
-		// ends up bigger than what's visible and gets clipped by the box,
-		// which makes the centered square and Load CD button look
-		// off-center. With a weight the view shrinks to fit.
+		// the view at its preferred size even when the box is smaller (low
+		// resolution screens/small windows), so the view ends up bigger
+		// than what's visible and gets clipped by the box. With a weight
+		// the view shrinks to fit.
 		.Add(coverArtView, 1.0f)
 	.End();
-
-	BScrollView* coverArtCandidatesScrollView = new BScrollView(
-		"coverArtCandidatesScrollView", coverArtCandidatesView,
-		B_WILL_DRAW | B_FRAME_EVENTS, true, false, B_NO_BORDER);
-
-	// The selector strip's own card also carries a reminder label below
-	// it - Encode() (see its own comment) swaps this whole card out for
-	// coverArtCard, showing just the selected image, the moment
-	// encoding actually starts, so the reminder is only ever visible
-	// while there's still a choice left to make.
-	BStringView* coverArtCandidatesLabel = new BStringView(
-		"coverArtCandidatesLabel", PICK_COVER_ART_LABEL);
-	coverArtCandidatesLabel->SetAlignment(B_ALIGN_CENTER);
-
-	BView* coverArtCandidatesCard = new BView("coverArtCandidatesCard", 0);
-	BLayoutBuilder::Group<>(coverArtCandidatesCard, B_VERTICAL,
-				B_USE_HALF_ITEM_SPACING)
-		.SetInsets(B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING,
-					B_USE_DEFAULT_SPACING, B_USE_DEFAULT_SPACING)
-		.Add(coverArtCandidatesScrollView, 1.0f)
-		.Add(coverArtCandidatesLabel, 0.0f)
-	.End();
-
-	// BCardLayout sizes itself to the largest minimum of ALL its cards,
-	// visible or not. The candidates card's natural minimum (96px thumbnail
-	// strip + scrollbar + the "Pick cover art before encoding" label) is
-	// roughly 205x165, far more than a small/low resolution window can
-	// show, so even while coverArtCard was the visible card the box was
-	// laid out at that size and clipped. Explicit minimums keep each card
-	// able to shrink down to about 100x100; the candidates strip scrolls
-	// horizontally anyway, and the label just gets clipped when narrow.
-	coverArtCandidatesScrollView->SetExplicitMinSize(
-		BSize(0, B_SIZE_UNSET));
-	coverArtCandidatesLabel->SetExplicitMinSize(BSize(0, B_SIZE_UNSET));
-	coverArtCard->SetExplicitMinSize(BSize(100, 100));
-	coverArtCandidatesCard->SetExplicitMinSize(BSize(100, 100));
-
-	coverArtBoxView->SetLayout(new BCardLayout());
-	coverArtBoxView->AddChild(coverArtCard);
-	coverArtBoxView->AddChild(coverArtCandidatesCard);
-	((BCardLayout*)coverArtBoxView->GetLayout())->SetVisibleItem((int32)0);
 
 	// Details editor and cover art side by side, with a vertical splitter
 	// between them, sitting above the horizontal splitter that separates
@@ -319,88 +307,83 @@ AppView::MessageReceived(BMessage* message)
 				// Sent by AppWindow (see AppWindow::LoadCDMenu()) every
 				// time it rebuilds the Load CD menu - both at startup and
 				// on every mount/unmount - so CoverArtView's own "Load
-				// CD" button (drawn over its placeholder gradient) stays
+				// CD" button (drawn in place of the cover) stays
 				// in sync with whether there's actually a CD to load.
 				bool mounted = false;
 				message->FindBool("mounted", &mounted);
-				coverArtView->SetCdMounted(mounted);
+				coverArtView->SetEmptyButtonVisible(mounted);
 			}
 			break;
 		case COVER_ART_FOUND: {
 				// Sent by MusicBrainzLookup (on its own thread) once it's
-				// found - or failed to find - cover art for the disc most
-				// recently loaded, as parallel indexed "bitmap"/"imageData"
-				// arrays - one candidate release's cover art per pair, in
-				// the order MusicBrainzLookup checked them, almost always
-				// just one. Each candidate's original compressed bytes are
-				// kept in coverArtCandidates (see AppView.h) so
+				// found cover art for the disc most recently loaded, as
+				// parallel indexed "imageData"/"releaseId"/"releaseTitle"/
+				// "releaseYear" arrays - one candidate release's cover art
+				// per entry, in the order MusicBrainzLookup checked them,
+				// almost always just one. Kept in coverArtImages so
 				// EncodeThread() can write out whichever one ends up
 				// selected once Encode() is pressed.
 				ClearCoverArtCandidates();
-				coverArtCandidates
-					= new BObjectList<CoverArtCandidate, true>(
-						MAX_COVER_ART_CANDIDATES);
-
-				BBitmap* bitmaps[MAX_COVER_ART_CANDIDATES];
-				int32 bitmapCount = 0;
 
 				int32 index = 0;
 				const void* data;
 				ssize_t size;
-				while ((bitmapCount < MAX_COVER_ART_CANDIDATES)
+				while ((index < MAX_COVER_ART_CANDIDATES)
 						&& (message->FindData("imageData", B_RAW_TYPE, index,
 							&data, &size) == B_OK)) {
-					BBitmap* bitmap = NULL;
-					message->FindPointer("bitmap", index, (void**)&bitmap);
-
-					CoverArtCandidate* candidate = new CoverArtCandidate();
-					candidate->data = new unsigned char[size];
-					memcpy(candidate->data, data, size);
-					candidate->size = (size_t)size;
-
 					const unsigned char* bytes = (const unsigned char*)data;
-					if ((size >= 8) && (bytes[0] == 0x89) && (bytes[1] == 'P')
-							&& (bytes[2] == 'N') && (bytes[3] == 'G')) {
-						candidate->extension = "png";
-					} else if ((size >= 3) && (bytes[0] == 0xFF)
-							&& (bytes[1] == 0xD8) && (bytes[2] == 0xFF)) {
-						candidate->extension = "jpg";
-					} else if ((size >= 4) && (bytes[0] == 'G')
-							&& (bytes[1] == 'I') && (bytes[2] == 'F')) {
-						candidate->extension = "gif";
-					} else {
+					tagkit::CoverArtImage image;
+					image.data.assign(bytes, bytes + size);
+					image.mimeType
+						= tagkit::detect_image_mime_type(bytes, (size_t)size);
+					if (image.mimeType.Length() == 0) {
 						// The Cover Art Archive serves mostly JPEG/PNG - a
-						// reasonable default for anything else unrecognized.
-						candidate->extension = "jpg";
+						// reasonable default for anything unrecognized.
+						image.mimeType = "image/jpeg";
 					}
+					const char* text;
+					if (message->FindString("releaseId", index, &text) == B_OK)
+						image.releaseId = text;
+					if (message->FindString("releaseTitle", index, &text)
+							== B_OK) {
+						image.releaseTitle = text;
+					}
+					message->FindInt32("releaseYear", index, &image.year);
 
-					coverArtCandidates->AddItem(candidate);
-					bitmaps[bitmapCount] = bitmap;
-					bitmapCount++;
+					coverArtImages.push_back(image);
 					index++;
 				}
 
-				// One candidate (by far the common case): show it full
-				// size in coverArtView, same as before this supported more
-				// than one. More than one: hand every bitmap to
-				// coverArtCandidatesView instead and switch coverArtBoxView
-				// to that card - see InitView()'s own comment on the two
-				// cards. Either way the selection (coverArtCandidatesView
-				// defaults to index 0) is what EncodeThread() reads at
-				// Encode() time, not whatever was selected when this
-				// message arrived.
-				BCardLayout* cardLayout
-					= (BCardLayout*)coverArtBoxView->GetLayout();
-				if (bitmapCount > 1) {
-					coverArtCandidatesView->SetCandidates(bitmaps,
-						bitmapCount);
-					cardLayout->SetVisibleItem((int32)1);
-				} else {
-					coverArtView->SetCoverArt(
-						(bitmapCount == 1) ? bitmaps[0] : NULL);
-					cardLayout->SetVisibleItem((int32)0);
+				// The first candidate is shown (and used) unless the user
+				// picks another. With several to choose from the picker
+				// opens straight away - Encode() closes it again, locking
+				// the choice in.
+				selectedCoverArt = 0;
+				ShowSelectedCoverArt();
+				if (coverArtImages.size() > 1)
+					ShowCoverArtPicker();
+			}
+			break;
+		case COVER_ART_CONTEXT:
+			ShowCoverArtMenu(message);
+			break;
+		case COVER_ART_CHOOSE:
+			ShowCoverArtPicker();
+			break;
+		case tagkit::kMsgCoverArtPickerChosen: {
+				int32 chosen = -1;
+				if ((message->FindInt32("index", &chosen) == B_OK)
+						&& (chosen >= 0)
+						&& (chosen < (int32)coverArtImages.size())) {
+					selectedCoverArt = chosen;
+					ShowSelectedCoverArt();
 				}
 			}
+			break;
+		case tagkit::kMsgCoverArtPickerClosed:
+			// The picker is closing by itself (Use Selected Cover, Cancel
+			// or its close box): just forget it.
+			coverArtPicker = NULL;
 			break;
 		case METADATA_FOUND: {
 				// Sent by MusicBrainzLookup (on its own thread) alongside
@@ -1730,22 +1713,9 @@ AppView::Encode()
 		return;
 	}
 
-	// While there was more than one cover art candidate to choose from,
-	// coverArtBoxView has been showing the selector strip (plus its
-	// "Pick cover art before encoding" reminder) instead of coverArtView
-	// - see InitView()'s own comment. Now that a run is actually
-	// starting, that choice is locked in (EncodeThread() below reads the
-	// same selection), so swap over to showing just the picked image,
-	// the same as the single-candidate case always has. CopySelectedBitmap()
-	// returns NULL - and so leaves the current card alone - when the
-	// selector was never showing in the first place (no candidates).
-	BBitmap* selectedCandidateBitmap
-		= coverArtCandidatesView->CopySelectedBitmap();
-	if (selectedCandidateBitmap) {
-		coverArtView->SetCoverArt(selectedCandidateBitmap);
-		((BCardLayout*)coverArtBoxView->GetLayout())->SetVisibleItem(
-			(int32)0);
-	}
+	// A picker window left open is closed now: the choice it was offering
+	// is locked in for this run (EncodeThread() reads the same selection).
+	CloseCoverArtPicker();
 
 	CheckDiskSpace();
 
@@ -1806,19 +1776,18 @@ AppView::EncodeThread(void* args)
 	BString mbDiscId, mbReleaseId, mbReleaseGroupId, mbArtistId;
 	BObjectList<TrackMBMetadata, true> mbTrackMetadata(20);
 	if (view->LockLooper()) {
-		// Whichever candidate is selected right now - defaulting to the
-		// first, per CoverArtCandidatesView's own "default to the first
-		// image" rule - is what gets locked in for this run. Selecting a
-		// different candidate after this point (e.g. clicking a
-		// thumbnail just as Encode() starts) has no effect on a run
-		// already under way.
-		int32 selected = view->coverArtCandidatesView->SelectedIndex();
-		CoverArtCandidate* candidate = view->coverArtCandidates
-			? (CoverArtCandidate*)view->coverArtCandidates->ItemAt(selected)
-			: NULL;
-		if (candidate) {
-			coverArt.SetTo(candidate->data, candidate->size,
-				candidate->extension);
+		// Whichever candidate is selected right now - the first unless
+		// the user picked another - is what gets locked in for this run.
+		if ((view->selectedCoverArt >= 0)
+				&& (view->selectedCoverArt
+					< (int32)view->coverArtImages.size())) {
+			const tagkit::CoverArtImage& image
+				= view->coverArtImages[view->selectedCoverArt];
+			if (!image.data.empty()) {
+				coverArt.SetTo(&image.data[0], image.data.size(),
+					tagkit::image_extension_for_mime_type(
+						image.mimeType.String()));
+			}
 		}
 		mbDiscId = view->mbDiscId;
 		mbReleaseId = view->mbReleaseId;
@@ -2525,16 +2494,74 @@ AppView::ClearCoverArtCandidates()
 {
 	PRINT(("AppView::ClearCoverArtCandidates()\n"));
 
-	delete coverArtCandidates;
-	coverArtCandidates = NULL;
+	CloseCoverArtPicker();
+	coverArtImages.clear();
+	selectedCoverArt = 0;
+	coverArtView->Clear();
+}
 
-	coverArtView->SetCoverArt(NULL);
-	coverArtCandidatesView->Clear();
 
-	BCardLayout* cardLayout = (BCardLayout*)coverArtBoxView->GetLayout();
-	if (cardLayout) {
-		cardLayout->SetVisibleItem((int32)0);
+void
+AppView::ShowSelectedCoverArt()
+{
+	BBitmap* bitmap = NULL;
+	if ((selectedCoverArt >= 0)
+			&& (selectedCoverArt < (int32)coverArtImages.size())) {
+		bitmap = tagkit::decode_cover_art(coverArtImages[selectedCoverArt]);
 	}
+
+	// A candidate that doesn't decode just shows the placeholder; its bytes
+	// are still what gets written to the files.
+	coverArtView->SetBitmap(bitmap);
+}
+
+
+void
+AppView::ShowCoverArtPicker()
+{
+	if (coverArtImages.size() < 2)
+		return;
+
+	// Replace a picker left open from earlier. Quit() (unlike the window
+	// closing by itself) doesn't send us the "closed" message, so there's no
+	// stale one to clobber the new pointer below.
+	CloseCoverArtPicker();
+
+	coverArtPicker = new tagkit::CoverArtPickerWindow(BMessenger(this),
+		coverArtImages[0].releaseTitle, coverArtImages);
+	if (Window() != NULL)
+		coverArtPicker->CenterIn(Window()->Frame());
+	coverArtPicker->Show();
+}
+
+
+void
+AppView::CloseCoverArtPicker()
+{
+	if (coverArtPicker != NULL) {
+		if (coverArtPicker->Lock())
+			coverArtPicker->Quit();
+		coverArtPicker = NULL;
+	}
+}
+
+
+void
+AppView::ShowCoverArtMenu(BMessage* message)
+{
+	BPoint where;
+	if (message->FindPoint("where", &where) != B_OK)
+		return;
+
+	BPopUpMenu* menu = new BPopUpMenu("coverArtMenu", false, false);
+	BMenuItem* chooseItem = new BMenuItem(CHOOSE_COVER_ART_MENU_TXT,
+		new BMessage(COVER_ART_CHOOSE));
+	chooseItem->SetEnabled(coverArtImages.size() > 1);
+	menu->AddItem(chooseItem);
+	menu->SetTargetForItems(this);
+
+	// Asynchronous: the menu deletes itself once it has closed.
+	menu->Go(where, true, true, true);
 }
 
 

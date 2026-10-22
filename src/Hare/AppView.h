@@ -5,11 +5,15 @@
 #ifndef __APP_VIEW_H__
 #define __APP_VIEW_H__
 
+#include <vector>
+
 #include <Box.h>
 #include <Node.h>
 #include <ObjectList.h>
 #include <String.h>
 #include <View.h>
+
+#include "tagkit/CoverArtImage.h"
 
 #include "RefRow.h"
 
@@ -22,11 +26,15 @@ class BStatusBar;
 class BStringView;
 class BTextControl;
 class BarberPoleView;
-class CoverArtCandidatesView;
-class CoverArtView;
 class EditorView;
 class EncoderListView;
 class PrefWindow;
+
+namespace tagkit {
+class CoverArtPickerWindow;
+class CoverArtView;
+}
+
 // One track's MusicBrainz metadata, as reported by MusicBrainzLookup's
 // METADATA_FOUND message - kept around (one flat list per currently loaded
 // disc) so EncodeThread() can look up the right track's Recording MBID (and
@@ -37,22 +45,6 @@ struct TrackMBMetadata {
 	BString title;
 	BString artist;
 	BString recordingId;
-};
-
-// One MusicBrainz cover-art candidate's compressed image bytes - kept
-// around (one flat list per currently loaded disc, most often with just
-// one entry) so EncodeThread() can write out whichever candidate is
-// selected once Encode() is pressed. The decoded bitmap shown on screen
-// is owned separately, by whichever of coverArtView/coverArtCandidatesView
-// is currently displaying it (see MessageReceived()'s COVER_ART_FOUND
-// case) - this struct only needs the original bytes, for WriteCoverArt()/
-// WriteTags() to write out later.
-struct CoverArtCandidate {
-	CoverArtCandidate() : data(NULL), size(0) {}
-	~CoverArtCandidate() { delete[] data; }
-	unsigned char* data;
-	size_t size;
-	BString extension;
 };
 
 class AppView : public BView {
@@ -93,6 +85,14 @@ private:
 		const BObjectList<TrackMBMetadata, true>* trackMetadata,
 		BString* errorMessage = NULL);
 	void ClearCoverArtCandidates();
+	// Shows coverArtImages[selectedCoverArt] in coverArtView.
+	void ShowSelectedCoverArt();
+	// Opens (or replaces) the picker window, when there's a choice to make.
+	void ShowCoverArtPicker();
+	void CloseCoverArtPicker();
+	// The pop-up menu (Choose cover art...) for a right click on the art;
+	// message is the COVER_ART_CONTEXT message with the click's "where".
+	void ShowCoverArtMenu(BMessage* message);
 	// Picks which of statusBoxView's two cards (statusBar, the normal
 	// progress display, or barberPoleView, the indeterminate one) should
 	// be visible right now, and starts/stops barberPoleView's animation
@@ -108,8 +108,7 @@ private:
 	EditorView* editorView;
 	BBox* editorBoxView;
 	BScrollView* editorScrollView;
-	CoverArtView* coverArtView;
-	CoverArtCandidatesView* coverArtCandidatesView;
+	tagkit::CoverArtView* coverArtView;
 	BBox* coverArtBoxView;
 	BSplitView* topSplitView;
 	BSplitView* mainSplitView;
@@ -133,10 +132,15 @@ private:
 	// STARTED/_FINISHED in MessageReceived().
 	int32 fMusicBrainzLookupsPending;
 	// Every cover-art candidate MusicBrainzLookup found for the currently
-	// loaded disc's release (see CoverArtCandidate above and
-	// MessageReceived()'s COVER_ART_FOUND case) - almost always one
-	// entry. NULL until the first COVER_ART_FOUND arrives.
-	BObjectList<CoverArtCandidate, true>* coverArtCandidates;
+	// loaded disc's release (see MessageReceived()'s COVER_ART_FOUND case) -
+	// almost always one entry, none until the first COVER_ART_FOUND
+	// arrives. coverArtView shows coverArtImages[selectedCoverArt]; with
+	// more than one candidate, coverArtPicker (TagKit's picker window, NULL
+	// while closed) is where the user chooses between them, and
+	// EncodeThread() writes out whichever one is selected when a run starts.
+	std::vector<tagkit::CoverArtImage> coverArtImages;
+	int32 selectedCoverArt;
+	tagkit::CoverArtPickerWindow* coverArtPicker;
 	BString mbDiscId;
 	BString mbReleaseId;
 	BString mbReleaseGroupId;

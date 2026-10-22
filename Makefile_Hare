@@ -34,8 +34,6 @@ SRCS = \
 	 src/Hare/AppWindow.cpp  \
 	 src/Hare/BarberPoleView.cpp  \
 	 src/Hare/CheckMark.cpp  \
-	 src/Hare/CoverArtCandidatesView.cpp \
-	 src/Hare/CoverArtView.cpp \
 	 src/Hare/EditorView.cpp  \
 	 src/Hare/EncoderListView.cpp  \
 	 src/Hare/MusicBrainzLookup.cpp \
@@ -44,6 +42,9 @@ SRCS = \
 	 src/Hare/Settings.cpp  \
 	 src/Hare/StatusBarFilter.cpp  \
 	 $(TAGKIT_CORE_SRCS) \
+	 $(addprefix $(TAGKIT_DIR)/, CoverArtCandidatesView.cpp \
+		CoverArtDragDrop.cpp CoverArtPickerWindow.cpp CoverArtView.cpp \
+		EmptyArtButton.cpp) \
 
 
 #	Specify the resource definition files to use. Full or relative paths can be

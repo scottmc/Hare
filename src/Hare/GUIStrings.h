@@ -67,7 +67,7 @@
 
 #define REMOVED_TXT B_TRANSLATE_CONTEXT("One or more items in the list have been deleted.\nEncoding has been canceled.", "GUIStrings")
 
-#define PICK_COVER_ART_LABEL B_TRANSLATE_CONTEXT("Pick cover art before encoding", "GUIStrings")
+#define CHOOSE_COVER_ART_MENU_TXT B_TRANSLATE_CONTEXT("Choose cover art" B_UTF8_ELLIPSIS, "GUIStrings")
 
 #define LOW_DISK_SPACE_PREFIX_TXT B_TRANSLATE_CONTEXT("Low disk space: only about ", "GUIStrings")
 #define LOW_DISK_SPACE_MIDDLE_TXT B_TRANSLATE_CONTEXT(" MB free on the destination volume, but this encode run may need roughly ", "GUIStrings")

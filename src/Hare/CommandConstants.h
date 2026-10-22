@@ -38,10 +38,12 @@
 #define MUSICBRAINZ_LOOKUP_FINISHED '035'
 #define CD_MOUNT_STATE_CHANGED '036'
 #define LOAD_CD_BUTTON_PRESSED '037'
+#define COVER_ART_CONTEXT '038'
+#define COVER_ART_CHOOSE '039'
 
 // Cap on how many MusicBrainz cover-art candidates get fetched and
-// offered to the user to choose between - see CoverArtCandidatesView
-// and MusicBrainzLookup::FetchThread()'s own comments.
+// offered to the user to choose between - see TagKit's
+// CoverArtPickerWindow and MusicBrainzLookup::FetchThread()'s own comments.
 #define MAX_COVER_ART_CANDIDATES 10
 
 #define NUM_OF_COLUMNS 10
