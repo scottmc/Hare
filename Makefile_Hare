@@ -116,7 +116,7 @@ LOCALES = en
 #	Archive and iTunes (the same name and contact as MUSICBRAINZ_USER_AGENT in
 #	AppDefs.h); TAGKIT_USE_CATALOG makes TagKit's own words go through Hare's
 #	catalog, under the context "TagKit".
-DEFINES = DEBUG=1 TAGKIT_CLIENT_NAME=Hare TAGKIT_CLIENT_VERSION=1.5 \
+DEFINES = TAGKIT_CLIENT_NAME=Hare TAGKIT_CLIENT_VERSION=1.5 \
 	TAGKIT_CLIENT_CONTACT=github.com/HaikuArchives/Hare \
 	TAGKIT_USE_CATALOG
 
