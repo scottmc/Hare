@@ -2596,6 +2596,9 @@ AppView::SaveLayout()
 		layout.AddBool("listCollapsed", mainSplitView->IsItemCollapsed(1));
 	}
 
+	// The columns the user chose to show, and their order, widths and sorting.
+	listView->SaveColumnState();
+
 	settings->SetLayoutState(&layout);
 	settings->SaveSettings();
 }

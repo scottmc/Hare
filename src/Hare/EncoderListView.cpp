@@ -5,6 +5,8 @@
 #include "EncoderListView.h"
 #include "RefRow.h"
 
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <Debug.h>
@@ -19,6 +21,47 @@
 #include "CommandConstants.h"
 #include "GUIStrings.h"
 #include "Settings.h"
+
+namespace {
+
+// The version of the column layout saved with the window's settings. Bump it
+// when columns are added, removed or reordered: a layout saved by another
+// version is then not loaded, since it would put the columns in their old
+// places.
+const int32 kColumnLayoutVersion = 3;
+
+
+// A column of track numbers, which sorts by their value ("2" before "10"),
+// with the rows that have none last.
+class TrackNumberColumn : public BStringColumn {
+public:
+	TrackNumberColumn(const char* title, float width, float minWidth,
+			float maxWidth, uint32 truncate, alignment align)
+		:
+		BStringColumn(title, width, minWidth, maxWidth, truncate, align)
+	{
+	}
+
+	virtual int CompareFields(BField* field1, BField* field2)
+	{
+		int32 track1 = TrackOf(field1);
+		int32 track2 = TrackOf(field2);
+		if (track1 != track2)
+			return track1 < track2 ? -1 : 1;
+		return BStringColumn::CompareFields(field1, field2);
+	}
+
+private:
+	static int32 TrackOf(BField* field)
+	{
+		const char* text = ((BStringField*)field)->String();
+		int32 track = (text != NULL) ? atoi(text) : 0;
+		return track > 0 ? track : INT_MAX;
+	}
+};
+
+}	// namespace
+
 
 EncoderListView::EncoderListView()
 	:
@@ -39,8 +82,17 @@ EncoderListView::~EncoderListView()
 
 	delete checkMark;
 
+	SaveColumnState();
+}
+
+// The columns (their order, widths, which are shown, the sorting) go into
+// the settings, to be saved with them; also done by "Save layout".
+void
+EncoderListView::SaveColumnState()
+{
 	BMessage columnState;
 	SaveState(&columnState);
+	columnState.AddInt32("columnLayoutVersion", kColumnLayoutVersion);
 	settings->SetColumnsState(&columnState);
 }
 
@@ -56,11 +108,29 @@ EncoderListView::InitView()
 	int32 truncate = 3;
 	float extraspace = 0;
 	
-	AddColumn(new BBitmapColumn(ICON_COLUMN, 16, 16, 16, B_ALIGN_CENTER), COMPLETE_COLUMN_INDEX);
-	
 	extraspace = StringWidth("WW"); // add extraspace equal to width of WW
+
+	// The track number comes first, to the left of the check mark, and is
+	// what the list is sorted by to begin with: the order of the disc, and
+	// so the order the tracks are encoded in.
+	// It starts wide enough for its title, but can be made as narrow as two
+	// digits; the numbers are centered.
+	float trackWidth = StringWidth(TRACK_COLUMN) + extraspace;
+	float trackMinWidth = StringWidth("99") + 10;
+	BColumn* trackColumn = new TrackNumberColumn(TRACK_COLUMN, trackWidth,
+		trackMinWidth, maxWidth, truncate, B_ALIGN_CENTER);
+	AddColumn(trackColumn, TRACK_COLUMN_INDEX);
+
+	AddColumn(new BBitmapColumn(ICON_COLUMN, 16, 16, 16, B_ALIGN_CENTER), COMPLETE_COLUMN_INDEX);
+
+	// The title comes before the file name: not every track is a song (a
+	// comedy album, say), so it isn't called one.
+	minWidth = StringWidth(TITLE_COLUMN) + extraspace;
+	AddColumn(new BStringColumn(TITLE_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), TITLE_COLUMN_INDEX);
+
 	minWidth = StringWidth(FILE_COLUMN) + extraspace;
-	AddColumn(new BStringColumn(FILE_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), FILE_COLUMN_INDEX);
+	BColumn* fileColumn = new BStringColumn(FILE_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT);
+	AddColumn(fileColumn, FILE_COLUMN_INDEX);
 
 	minWidth = StringWidth(SAVE_AS_COLUMN) + extraspace;
 	AddColumn(new BStringColumn(SAVE_AS_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), SAVE_AS_COLUMN_INDEX);
@@ -71,12 +141,6 @@ EncoderListView::InitView()
 	minWidth = StringWidth(ALBUM_COLUMN) + extraspace;
 	AddColumn(new BStringColumn(ALBUM_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), ALBUM_COLUMN_INDEX);
 
-	minWidth = StringWidth(TITLE_COLUMN) + extraspace;
-	AddColumn(new BStringColumn(TITLE_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), TITLE_COLUMN_INDEX);
-
-	minWidth = StringWidth(TRACK_COLUMN) + extraspace;
-	AddColumn(new BStringColumn(TRACK_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), TRACK_COLUMN_INDEX);
-
 	minWidth = StringWidth(YEAR_COLUMN) + extraspace;
 	AddColumn(new BStringColumn(YEAR_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), YEAR_COLUMN_INDEX);
 
@@ -86,8 +150,21 @@ EncoderListView::InitView()
 	minWidth = StringWidth(GENRE_COLUMN) + extraspace;
 	AddColumn(new BStringColumn(GENRE_COLUMN, minWidth, minWidth, maxWidth, truncate, B_ALIGN_LEFT), GENRE_COLUMN_INDEX);
 
-	LoadState(settings->ColumnsState());
+	// The layout saved last time (column order, widths, the sorting), unless
+	// it was saved with another set of columns; then the sorting starts as
+	// described above.
+	int32 layoutVersion = 0;
+	if (settings->ColumnsState()->FindInt32("columnLayoutVersion",
+			&layoutVersion) == B_OK && layoutVersion == kColumnLayoutVersion) {
+		LoadState(settings->ColumnsState());
+	} else {
+		SetSortColumn(trackColumn, false, true);
+		// The title says more than the file name does, which is mostly the
+		// same words; the File column is there to turn on.
+		fileColumn->SetVisible(false);
+	}
 }
+
 
 void
 EncoderListView::AttachedToWindow()

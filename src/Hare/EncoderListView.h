@@ -21,6 +21,8 @@ public:
 	virtual void SelectionChanged();
 	virtual void KeyDown(const char* bytes, int32 numBytes);
 	BBitmap* GetCheckMark();
+	// Keeps the columns as they are now in the settings.
+	void SaveColumnState();
 private:
 	void InitView();
 	BBitmap* checkMark;
