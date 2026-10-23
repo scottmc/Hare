@@ -1,81 +1,121 @@
-1	English	application/x-vnd.haikuarchives.hare	2486927572
-Deselect All	GUIStrings		Deselect All
+1	English	application/x-vnd.haikuarchives.hare	1502295476
 Remove	GUIStrings		Remove
 File Path and Name Pattern for 	GUIString		File Path and Name Pattern for 
 .\n\nEncoding has been stopped.	GUIStrings		.\n\nEncoding has been stopped.
  cannot be encoded with this encoder. Continue?	GUIStrings		 cannot be encoded with this encoder. Continue?
 Error encoding file: 	GUIStrings		Error encoding file: 
- (no data for over 	GUIStrings		 (no data for over 
+(none)	TagKit		(none)
 Title	GUIStrings		Title
-Artist	GUIStrings		Artist
-Details Editor	GUIStrings		Details Editor
-Other	GUIStrings		Other
+Genre	TagKit		Genre
 Songs Remaining: 	GUIStrings		Songs Remaining: 
-Save Layout	GUIStrings		Save Layout
 Select All	GUIStrings		Select All
-File	FileColumn		File
-Album	GUIStrings		Album
-About...	GUIStrings		About...
-File Path and Name Pattern	GUIStrings		File Path and Name Pattern
-Pick cover art before encoding	GUIStrings		Pick cover art before encoding
-Album = %n	GUIStrings		Album = %n
-Year	GUIStrings		Year
-Apply	GUIStrings		Apply
+the file is missing	TagKit		the file is missing
 alpha	GUIStrings		alpha
-Comment	GUIStrings		Comment
+Apply	GUIStrings		Apply
 Yes	GUIStrings		Yes
+Other…	TagKit		Other…
+Edit	TagKit		Edit
  MB.\n\nYou can close this and continue if you like - this is just a warning.	GUIStrings		 MB.\n\nYou can close this and continue if you like - this is just a warning.
 Low disk space: only about 	GUIStrings		Low disk space: only about 
-Track	GUIStrings		Track
 Artist = %a	GUIStrings		Artist = %a
-Encoding Song: 	GUIStrings		Encoding Song: 
+Cover art for \"%file%\"	TagKit		Cover art for \"%file%\"
 Encoder	GUIStrings		Encoder
 Genre	GUIStrings		Genre
-. Loading a CD on an older Haiku can crash the whole system, so CD support has been disabled in 	GUIStrings		. Loading a CD on an older Haiku can crash the whole system, so CD support has been disabled in 
-Title = %t	GUIStrings		Title = %t
 No CD Mounted	GUIStrings		No CD Mounted
-golden master	GUIStrings		golden master
-Ripping Song: 	GUIStrings		Ripping Song: 
- seconds). This usually means the disc was ejected or the drive was disconnected.\n\nEncoding has been stopped.	GUIStrings		 seconds). This usually means the disc was ejected or the drive was disconnected.\n\nEncoding has been stopped.
+Choose cover art…	GUIStrings		Choose cover art…
+Title	TagKit		Title
  MB free on the destination volume, but this encode run may need roughly 	GUIStrings		 MB free on the destination volume, but this encode run may need roughly 
 Please check the addon's documentation.\n	EncoderExeNotFoundRunDoc		Please check the addon's documentation.\n
-Preferences	GUIStrings		Preferences
-Error creating path for: 	ErrorCreatingOutputPath		Error creating path for: 
+the file is read-only	TagKit		the file is read-only
 File	FileMenu		File
 Error opening file: 	ErrorOpeningFileEntry		Error opening file: 
+No file selected	TagKit		No file selected
 One or more items in the list have been deleted.\nEncoding has been canceled.	GUIStrings		One or more items in the list have been deleted.\nEncoding has been canceled.
 The CD drive stopped responding while ripping 	GUIStrings		The CD drive stopped responding while ripping 
+Track	TagKit		Track
+Some of the files to be encoded already exist:	GUIStrings		Some of the files to be encoded already exist:
 The addon could not find the required executable.	EncoderExeNotFoundInit		The addon could not find the required executable.
-beta	GUIStrings		beta
-Looking up disc info...	GUIStrings		Looking up disc info...
+Include the MusicBrainz IDs in the tags	GUIStrings		Include the MusicBrainz IDs in the tags
 Cannot continue.	GUIStrings		Cannot continue.
+that isn't a file	TagKit		that isn't a file
  until you update.\n\nYou can still encode existing audio files.	GUIStrings		 until you update.\n\nYou can still encode existing audio files.
-No Available Encoders	GUIStrings		No Available Encoders
 Error creating path for: 	ErrorCreatingOutputDir		Error creating path for: 
+No Available Encoders	GUIStrings		No Available Encoders
+(multiple)	TagKit		(multiple)
 Input File: 	GUIStrings		Input File: 
-Use Encoder Pattern	GUIStrings		Use Encoder Pattern
 gamma	GUIStrings		gamma
-development	GUIStrings		development
-Quit	GUIStrings		Quit
+Tagging and Attributes	GUIStrings		Tagging and Attributes
 Revert	GUIStrings		Revert
-Year = %y	GUIStrings		Year = %y
-No	GUIStrings		No
-Genre = %g	GUIStrings		Genre = %g
 Track = %k	GUIStrings		Track = %k
-Icon	GUIStrings		Icon
-) predates the SCSI CD driver fixes in hrev	GUIStrings		) predates the SCSI CD driver fixes in hrev
-The addon could not find the required executable.	EncoderExeNotFoundRun		The addon could not find the required executable.
+Genre = %g	GUIStrings		Genre = %g
 The disc was removed while ripping 	GUIStrings		The disc was removed while ripping 
 Please check the addon's documentation.\n	EncoderExeNotFoundInitDoc		Please check the addon's documentation.\n
-This copy of Haiku (	GUIStrings		This copy of Haiku (
-Save As	GUIStrings		Save As
-Load CD	LoadCdButton		Load CD
 Load CD	LoadCdMenu		Load CD
-Cancel	GUIStrings		Cancel
-Ok	GUIStrings		Ok
 Edit	GUIStrings		Edit
-Comment = %c	GUIStrings		Comment = %c
-Error creating path for: 	ErrorCreatingOutputParent		Error creating path for: 
+Ok	GUIStrings		Ok
 Error opening file: 	ErrorOpeningFilePath		Error opening file: 
+Comment = %c	GUIStrings		Comment = %c
+Encoding again will overwrite them. Rip and encode anyway?	GUIStrings		Encoding again will overwrite them. Rip and encode anyway?
+The tracks were encoded, but the tags (and cover art) couldn't be written to 	GUIStrings		The tracks were encoded, but the tags (and cover art) couldn't be written to 
+Deselect All	GUIStrings		Deselect All
+Choose Cover Art	TagKit		Choose Cover Art
+Album	TagKit		Album
+(still looking…)	TagKit		(still looking…)
+ (no data for over 	GUIStrings		 (no data for over 
+Include the MusicBrainz IDs in the attributes	GUIStrings		Include the MusicBrainz IDs in the attributes
+Save the cover art as an image file next to the tracks	GUIStrings		Save the cover art as an image file next to the tracks
+Artist	GUIStrings		Artist
+Artist	TagKit		Artist
+Save Layout	GUIStrings		Save Layout
+Use Selected Cover	TagKit		Use Selected Cover
+File	FileColumn		File
+Embed the cover art in the tags	GUIStrings		Embed the cover art in the tags
+About...	GUIStrings		About...
+Album	GUIStrings		Album
+File Path and Name Pattern	GUIStrings		File Path and Name Pattern
+Year	GUIStrings		Year
+Album = %n	GUIStrings		Album = %n
+Comment	GUIStrings		Comment
+Write the tags as file attributes	GUIStrings		Write the tags as file attributes
+Cancel	TagKit		Cancel
+Track	GUIStrings		Track
+Encoding Song: 	GUIStrings		Encoding Song: 
+. Loading a CD on an older Haiku can crash the whole system, so CD support has been disabled in 	GUIStrings		. Loading a CD on an older Haiku can crash the whole system, so CD support has been disabled in 
+Title = %t	GUIStrings		Title = %t
+Format	TagKit		Format
+golden master	GUIStrings		golden master
+Ripping Song: 	GUIStrings		Ripping Song: 
+Duration	TagKit		Duration
+ seconds). This usually means the disc was ejected or the drive was disconnected.\n\nEncoding has been stopped.	GUIStrings		 seconds). This usually means the disc was ejected or the drive was disconnected.\n\nEncoding has been stopped.
+ more	GUIStrings		 more
+Preferences	GUIStrings		Preferences
+Error creating path for: 	ErrorCreatingOutputPath		Error creating path for: 
+{0, plural, one{# file selected} other{# files selected}}	TagKit		{0, plural, one{# file selected} other{# files selected}}
+Year	TagKit		Year
+The track and the year must be blank or a whole number (up to 9999).	GUIStrings		The track and the year must be blank or a whole number (up to 9999).
+beta	GUIStrings		beta
+Looking up disc info...	GUIStrings		Looking up disc info...
+the file is on a read-only volume	TagKit		the file is on a read-only volume
+ of them.	GUIStrings		 of them.
+Write tags into the encoded files	GUIStrings		Write tags into the encoded files
+Quit	GUIStrings		Quit
+development	GUIStrings		development
+Use Encoder Pattern	GUIStrings		Use Encoder Pattern
+Year = %y	GUIStrings		Year = %y
+No	GUIStrings		No
+Icon	GUIStrings		Icon
+) predates the SCSI CD driver fixes in hrev	GUIStrings		) predates the SCSI CD driver fixes in hrev
+Image format:	GUIStrings		Image format:
+The addon could not find the required executable.	EncoderExeNotFoundRun		The addon could not find the required executable.
+Look up discs and cover art on MusicBrainz	GUIStrings		Look up discs and cover art on MusicBrainz
+Fill in an empty year from the MusicBrainz release	GUIStrings		Fill in an empty year from the MusicBrainz release
+Comment	TagKit		Comment
+Edit %field%	TagKit		Edit %field%
+This copy of Haiku (	GUIStrings		This copy of Haiku (
+Load CD	LoadCdButton		Load CD
+Save As	GUIStrings		Save As
+Cancel	GUIStrings		Cancel
+Error creating path for: 	ErrorCreatingOutputParent		Error creating path for: 
+...and 	GUIStrings		...and 
 Encode	GUIStrings		Encode
 CD support disabled (Haiku too old)	GUIStrings		CD support disabled (Haiku too old)
